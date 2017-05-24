@@ -165,9 +165,9 @@ void package_response(int response, char * msg, char * buffer){
 	package_message(MES_RESPONSE, message, buffer);
 }
 
-void package_updated(char * filename, __time_t mtime, char * buffer){
+void package_updated(char * filename, char * mtime, char * buffer){
 	char message[MESSAGE_MAX + 20];
-	sprintf(message, "%s %ld", filename, mtime);
+	sprintf(message, "\"%s\" %s", filename, mtime);
 	package_message(MES_UPDATED, message, buffer);
 }
 
@@ -182,7 +182,9 @@ void package_list(char * dir_info, char * buffer){
 }
 
 void package_get(char * filename, char * buffer){
-	package_message(MES_GET, filename, buffer);
+	char message[512];
+	sprintf(message, "\"%s\"", filename);
+	package_message(MES_GET, message, buffer);
 }
 
 void package_upload(char * filename, char * buffer){
@@ -191,9 +193,9 @@ void package_upload(char * filename, char * buffer){
 
 // Com data fica para depois
 // Definir como funcionará acesso ao arquivo
-void package_file(char * filename, __time_t mtime, uint32_t fsize, char * buffer){
-	char message[128];
-	sprintf(message, "%s %ld %d", filename, mtime, fsize);
+void package_file(char * filename, char * mtime, uint32_t fsize, char * buffer){
+	char message[512];
+	sprintf(message, "\"%s\" %s %d", filename, mtime, fsize);
 	package_message(MES_FILE, message, buffer);
 }
 

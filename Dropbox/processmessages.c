@@ -3,6 +3,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -65,7 +66,9 @@ struct client * process_hi(char * user, int clsock){
       printf("directory created for %s.\n", cl->userid);
     } else if (!cl->logged_in){
       // O arquivo já existe, vamos carregar as infos dele
+      pthread_mutex_lock(&cl->config_mtx);
       client_get_file_info(cl);
+      pthread_mutex_unlock(&cl->config_mtx);
     }
     cl->logged_in = 1;
   }
@@ -82,12 +85,110 @@ void process_ls(struct client * cli, int sock){
     bzero(line, sizeof(line));
     if(cli->files[i].name[0] != '\0'){
       // Tem informação
-      sprintf(line, "%s %s %s %d\n", cli->files[i].name, cli->files[i].extension, cli->files[i].last_modified, cli->files[i].size);
+      sprintf(line, "\"%s\" %s %d\n", cli->files[i].name, cli->files[i].last_modified, cli->files[i].size);
       strcat(message, line);
     }
   }
   package_list(message, buffer);
   write_str_to_socket(sock, buffer);
+}
+
+
+// A princípio não terminada nem utilizada
+void process_upd(char * message, struct client * cli, int sock){
+  char * init_filename = strchr(message, '\"') + 1;
+  char * end_filename = strchr(init_filename, '\"');
+  *(end_filename++) = '\0';
+  char * mtime = end_filename + 1;
+  //puts(init_filename);
+  //puts(mtime);
+  int i;
+  char send_buf[512];
+  for(i=0; i<MAXFILES; i++){
+    if (strcmp(cli->files[i].name, init_filename) == 0){
+      if (strcmp(cli->files[i].last_modified, mtime) == 0){
+        package_response(3,"Updated", send_buf);
+        write_str_to_socket(sock, send_buf);
+      }
+      else{
+        package_response(2,"Diff", send_buf);
+        write_str_to_socket(sock, send_buf);
+
+        // Envia novo arquivo
+        package_file(cli->files[i].name, cli->files[i].last_modified, cli->files[i].size, send_buf);
+        write_str_to_socket(sock, send_buf);
+
+        char filename[PATH_MAX];
+        sprintf(filename, "%s%s", cli->path_user, cli->files[i].name);
+
+        int f = open(filename, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        if(f < 0){
+          break;
+        }
+        int k = 0, r;
+        char c;
+        while(k < cli->files[i].size){
+          r = read(f, &c, 1);
+          if (r<0)
+            break;
+          r = write(sock, &c, 1);
+          if (r<0)
+            break;
+          k += r;
+          printf("%c", c);
+        }
+      }
+
+      break;
+    }
+  }
+  if (i==MAXFILES){
+    package_response(1,"Not exist", send_buf);
+    write_str_to_socket(sock, send_buf);
+  }
+}
+
+
+
+void process_get(char * message, struct client * cli, int sock){
+  char * init_filename = strchr(message, '\"');
+
+  if (init_filename == NULL)
+    return;
+
+  init_filename++;
+
+  char * end_filename = strchr(init_filename, '\"');
+
+  if (end_filename == NULL)
+    return;
+
+  *(end_filename) = '\0';
+
+  //char * mtime = end_filename + 1;
+  //puts(init_filename);
+  //puts(mtime);
+  int i;
+  char send_buf[512];
+  for(i=0; i<MAXFILES; i++){
+    if (strcmp(cli->files[i].name, init_filename) == 0){
+      package_response(2,"Exist", send_buf);
+      write_str_to_socket(sock, send_buf);
+
+      // Envia novo arquivo
+      package_file(cli->files[i].name, cli->files[i].last_modified, cli->files[i].size, send_buf);
+      write_str_to_socket(sock, send_buf);
+
+      char filename[PATH_MAX];
+      sprintf(filename, "%s%s", cli->path_user, cli->files[i].name);
+      write_file_to_socket(sock, filename, cli->files[i].size);
+      break;
+    }
+  }
+  if (i==MAXFILES){
+    package_response(-1,"Not exist", send_buf);
+    write_str_to_socket(sock, send_buf);
+  }
 }
 
 void * client_process(void * clsock_ptr){
@@ -126,8 +227,14 @@ void * client_process(void * clsock_ptr){
         }
 			}else if (cli != NULL){
         // Chega nesse ponto somente quando já está logado
-        if(strcmp("LS", str) == 0){
+        if(strcmp(MES_LS, str) == 0){
           process_ls(cli, clsock);
+        }
+        else if (strcmp(MES_UPDATED, str) == 0){
+          process_upd(espaco, cli, clsock);
+        }
+        else if (strcmp(MES_GET, str) == 0){
+          process_get(espaco, cli, clsock);
         }
       }
 		}

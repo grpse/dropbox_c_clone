@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <pthread.h>
 #include "dropboxUtil.h"
 
 struct file_info{
@@ -14,6 +15,7 @@ struct client{
   char path_user[PATH_MAX];
   struct file_info files[MAXFILES];
   int logged_in;
+  pthread_mutex_t config_mtx;
 };
 
 struct client_node{

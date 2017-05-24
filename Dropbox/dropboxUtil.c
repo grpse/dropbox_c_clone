@@ -3,6 +3,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -39,4 +40,47 @@ int write_str_to_socket(int sock, char * str){
 
 	n = write(sock, str, strlen(str) + 1);
 	return n;
+}
+
+int read_and_save_to_file(int sock, char * filename, int fsize){
+	int f = -1;
+	if ((f = creat(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0)
+		return -1;
+
+	int k = 0, r;
+	char c;
+	while(k < fsize){
+		r = read(sock, &c, 1);
+		if (r < 0)
+			break;
+
+		//printf("%c", c);
+		r = write(f, &c, 1);
+		if (r < 0){
+			puts("Error writing file");
+			close(f);
+			return -1;
+		}
+		k += r;
+	}
+	close(f);
+}
+
+int write_file_to_socket(int sock, char * filename, int fsize){
+	int f = open(filename, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if(f < 0){
+		return -1;
+	}
+	int k = 0, r;
+	char c;
+	while(k < fsize){
+		r = read(f, &c, 1);
+		if (r<0)
+			break;
+		r = write(sock, &c, 1);
+		if (r<0)
+			break;
+		k += r;
+	}
+	close(f);
 }

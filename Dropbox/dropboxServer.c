@@ -22,7 +22,7 @@ int main(int argc, char * argv[]){
 	struct sockaddr_in serv_addr, cli_addr;
 
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
-  	printf("ERROR opening socket");
+  	printf("ERROR opening socket\n");
 		exit(1);
 	}
 
@@ -32,7 +32,7 @@ int main(int argc, char * argv[]){
 	bzero(&(serv_addr.sin_zero), 8);
 
 	if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0){
-		printf("ERROR on binding");
+		printf("ERROR on binding\n");
 		exit(1);
 	}
 	listen(sockfd, 10);

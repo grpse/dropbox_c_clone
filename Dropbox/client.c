@@ -28,7 +28,7 @@ void client_get_file_info(struct client * cli){
         sprintf(filename, "%s%s", cli->path_user, f->d_name);
         stat(filename, &attrib);
         file.size = attrib.st_size;
-        strftime(file.last_modified, MAX_USERID, "%d/%m/%Y %T", localtime(&attrib.st_mtime));
+        strftime(file.last_modified, MAX_USERID, "%F %T", localtime(&attrib.st_mtime));
         // sprintf(file.last_modified, "%s", localtime(&attrib.st_mtime));
         char * ext = strchr(file.name, '.');
         if (ext!=NULL){
@@ -55,6 +55,7 @@ void init_client(struct client * cli){
   bzero(cli->devices, MAX_SAME_USER * sizeof(cli->devices[0]));
   bzero(cli->userid, MAX_USERID);
   cli->logged_in = 0;
+  pthread_mutex_init(&cli->config_mtx, NULL);
   int i;
   for (i=0; i<MAXFILES; i++){
     cli->files[i].size = 0;

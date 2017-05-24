@@ -13,3 +13,5 @@
 int read_until_eos(int sock, char * buffer);
 int read_n_from_socket(int n, int sock, char *buffer);
 int write_str_to_socket(int sock, char * str);
+int read_and_save_to_file(int sock, char * filename, int fsize);
+int write_file_to_socket(int sock, char * filename, int fsize);

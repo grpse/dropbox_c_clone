@@ -142,7 +142,7 @@ void package_response(int response, char * msg, char * buffer);
 
 // Com data fica pra depois
 //void package_updated()
-void package_updated(char * filename, __time_t mtime, char * buffer);
+void package_updated(char * filename, char * mtime, char * buffer);
 
 void package_ls(char * buffer);
 
@@ -155,7 +155,7 @@ void package_upload(char * filename, char * buffer);
 
 // Com data fica para depois
 // Exige que seja enviado o arquivo em separado
-void package_file(char * filename, __time_t mtime, uint32_t fsize, char * buffer);
+void package_file(char * filename, char * mtime, uint32_t fsize, char * buffer);
 
 void package_delete(char * filename, char * buffer);
 
