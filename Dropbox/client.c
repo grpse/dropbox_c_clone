@@ -51,6 +51,32 @@ void client_get_file_info(struct client * cli){
   }
 }
 
+void file_init_read(struct file_info *file){
+  pthread_mutex_lock(&file->reader_config);
+  file->readers++;
+  // Primeiro leitor pega o lock de uso
+  if (file->readers == 1)
+    pthread_mutex_lock(&file->can_use);
+  pthread_mutex_unlock(&file->reader_config);
+}
+
+void file_end_read(struct file_info *file){
+  pthread_mutex_lock(&file->reader_config);
+  file->readers--;
+  // Primeiro leitor pega o lock de uso
+  if (file->readers == 0)
+    pthread_mutex_unlock(&file->can_use);
+  pthread_mutex_unlock(&file->reader_config);
+}
+
+void file_init_write(struct file_info *file){
+  pthread_mutex_lock(&file->can_use);
+}
+
+void file_end_write(struct file_info *file){
+  pthread_mutex_unlock(&file->can_use);
+}
+
 void init_client(struct client * cli){
   bzero(cli->devices, MAX_SAME_USER * sizeof(cli->devices[0]));
   bzero(cli->userid, MAX_USERID);
@@ -62,6 +88,9 @@ void init_client(struct client * cli){
     bzero(cli->files[i].extension, MAX_USERID);
     bzero(cli->files[i].name, MAX_USERID);
     bzero(cli->files[i].last_modified, MAX_USERID);
+    cli->files[i].readers = 0;
+    pthread_mutex_init(&cli->files[i].reader_config, NULL);
+    pthread_mutex_init(&cli->files[i].can_use, NULL);
   }
 }
 

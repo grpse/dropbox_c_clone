@@ -7,6 +7,9 @@ struct file_info{
   char extension[MAX_USERID];
   char last_modified[MAX_USERID];
   int size;
+  pthread_mutex_t reader_config;
+  int readers;
+  pthread_mutex_t can_use;
 };
 
 struct client{
@@ -32,3 +35,9 @@ struct client * client_login(struct client_list * clist, char * userid, int devi
 void client_logout(struct client * cli, int device);
 
 void client_get_file_info(struct client * cli);
+
+// Files
+void file_init_read(struct file_info *file);
+void file_end_read(struct file_info *file);
+void file_init_write(struct file_info *file);
+void file_end_write(struct file_info *file);

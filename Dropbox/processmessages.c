@@ -83,11 +83,13 @@ void process_ls(struct client * cli, int sock){
   for(i=0;i<MAXFILES;i++){
     char line[MAX_USERID*3 + 20];
     bzero(line, sizeof(line));
+    file_init_read(&cli->files[i]);
     if(cli->files[i].name[0] != '\0'){
       // Tem informação
       sprintf(line, "\"%s\" %s %d\n", cli->files[i].name, cli->files[i].last_modified, cli->files[i].size);
       strcat(message, line);
     }
+    file_end_read(&cli->files[i]);
   }
   package_list(message, buffer);
   write_str_to_socket(sock, buffer);
@@ -105,6 +107,7 @@ void process_upd(char * message, struct client * cli, int sock){
   int i;
   char send_buf[512];
   for(i=0; i<MAXFILES; i++){
+    file_init_read(&cli->files[i]);
     if (strcmp(cli->files[i].name, init_filename) == 0){
       if (strcmp(cli->files[i].last_modified, mtime) == 0){
         package_response(3,"Updated", send_buf);
@@ -123,6 +126,7 @@ void process_upd(char * message, struct client * cli, int sock){
 
         int f = open(filename, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         if(f < 0){
+          file_end_read(&cli->files[i]);
           break;
         }
         int k = 0, r;
@@ -138,9 +142,10 @@ void process_upd(char * message, struct client * cli, int sock){
           printf("%c", c);
         }
       }
-
+      file_end_read(&cli->files[i]);
       break;
     }
+    file_end_read(&cli->files[i]);
   }
   if (i==MAXFILES){
     package_response(1,"Not exist", send_buf);
@@ -171,6 +176,7 @@ void process_get(char * message, struct client * cli, int sock){
   int i;
   char send_buf[512];
   for(i=0; i<MAXFILES; i++){
+    file_init_read(&cli->files[i]);
     if (strcmp(cli->files[i].name, init_filename) == 0){
       package_response(2,"Exist", send_buf);
       write_str_to_socket(sock, send_buf);
@@ -182,8 +188,10 @@ void process_get(char * message, struct client * cli, int sock){
       char filename[PATH_MAX];
       sprintf(filename, "%s%s", cli->path_user, cli->files[i].name);
       write_file_to_socket(sock, filename, cli->files[i].size);
+      file_end_read(&cli->files[i]);
       break;
     }
+    file_end_read(&cli->files[i]);
   }
   if (i==MAXFILES){
     package_response(-1,"Not exist", send_buf);
@@ -231,10 +239,14 @@ void * client_process(void * clsock_ptr){
           process_ls(cli, clsock);
         }
         else if (strcmp(MES_UPDATED, str) == 0){
-          process_upd(espaco, cli, clsock);
+          // Nao parece haver necessidade
+          //process_upd(espaco, cli, clsock);
         }
         else if (strcmp(MES_GET, str) == 0){
           process_get(espaco, cli, clsock);
+        }
+        else if (strcmp(MES_CLOSE, str) == 0){
+          finish = 1;
         }
       }
 		}
