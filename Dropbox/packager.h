@@ -160,3 +160,7 @@ void package_file(char * filename, char * mtime, uint32_t fsize, char * buffer);
 void package_delete(char * filename, char * buffer);
 
 void package_close(char * buffer);
+
+// Desenpacotador
+char * get_file_info(char * buffer, char ** fname, char ** mtime, int * fsize);
+char * response_unpack(char * buffer, int * val, char ** message);

@@ -13,6 +13,15 @@
 #include "client.h"
 
 void client_get_file_info(struct client * cli){
+  int i;
+  for (i=0; i<MAXFILES; i++){
+    file_init_write(&cli->files[i]);
+    cli->files[i].size = 0;
+    bzero(cli->files[i].extension, MAX_USERID);
+    bzero(cli->files[i].name, MAX_USERID);
+    bzero(cli->files[i].last_modified, MAX_USERID);
+    file_end_write(&cli->files[i]);
+  }
   DIR *d;
   struct dirent *f;
   d = opendir(cli->path_user);
@@ -30,19 +39,28 @@ void client_get_file_info(struct client * cli){
         file.size = attrib.st_size;
         strftime(file.last_modified, MAX_USERID, "%F %T", localtime(&attrib.st_mtime));
         // sprintf(file.last_modified, "%s", localtime(&attrib.st_mtime));
-        char * ext = strchr(file.name, '.');
+        char * ext = strrchr(file.name, '.');
         if (ext!=NULL){
           strcpy(file.extension, ext+1);
         }
 
 
         //printf("%s %s %s %d\n", file.name, file.extension, file.last_modified, file.size);
-        int i=0;
-        while(cli->files[i].name[0] != '\0')
+        i=0;
+        file_init_read(&cli->files[i]);
+        while(i<MAXFILES && cli->files[i].name[0] != '\0'){
+          file_end_read(&cli->files[i]);
           i++;
+          file_init_read(&cli->files[i]);
+        }
+        file_end_read(&cli->files[i]);
+        if (i == MAXFILES)
+          exit(0);
 
+        file_init_write(&cli->files[i]);
         memcpy(&cli->files[i], &file, sizeof(file));
-        printf("%s %s %s %d\n", cli->files[i].name, cli->files[i].extension, cli->files[i].last_modified, cli->files[i].size);
+        file_end_write(&cli->files[i]);
+        //printf("%s %s %s %d\n", cli->files[i].name, cli->files[i].extension, cli->files[i].last_modified, cli->files[i].size);
       }
     }
   }else{

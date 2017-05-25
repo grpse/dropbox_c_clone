@@ -188,7 +188,9 @@ void package_get(char * filename, char * buffer){
 }
 
 void package_upload(char * filename, char * buffer){
-	package_message(MES_UPLOAD, filename, buffer);
+	char message[512];
+	sprintf(message, "\"%s\"", filename);
+	package_message(MES_UPLOAD, message, buffer);
 }
 
 // Com data fica para depois
@@ -200,9 +202,65 @@ void package_file(char * filename, char * mtime, uint32_t fsize, char * buffer){
 }
 
 void package_delete(char * filename, char * buffer){
-	package_message(MES_DELETE, filename, buffer);
+	char message[512];
+	sprintf(message, "\"%s\"", filename);
+	package_message(MES_DELETE, message, buffer);
 }
 
 void package_close(char * buffer){
 	package_message(MES_CLOSE, "", buffer);
+}
+
+// Entra com o ponteiro sem a mensagem
+// Mensagem: *"nome" datahoramodif tamanho
+char * get_file_info(char * buffer, char ** fname, char ** mtime, int * fsize){
+  *fname = strchr(buffer, '\"');
+  if (*fname == NULL)
+    return NULL;
+
+  (*fname) ++;
+
+  *mtime = strchr(*fname, '\"');
+  if (*mtime == NULL)
+    return NULL;
+
+  (*mtime) += 2;
+
+  *((*mtime) - 2) = '\0';
+
+  char * fsize_str = strchr(*mtime, ' ');
+  if (fsize_str == NULL)
+    return NULL;
+  fsize_str = strchr(fsize_str + 1, ' ');
+  if (fsize_str == NULL)
+    return NULL;
+  *(fsize_str++) = '\0';
+
+  char * end;
+  *fsize = strtol(fsize_str, &end, 10);
+  if (*fsize == 0 && end == fsize_str)
+    return NULL;
+
+  return end;
+}
+
+// Mensagem: "RES valor str"
+char * response_unpack(char * buffer, int * val, char ** message){
+  char * valstr = strchr(buffer, ' ');
+  if (valstr == NULL)
+    return NULL;
+  valstr++;
+
+  char * mesinit = strchr(valstr, ' ');
+  if (mesinit == NULL)
+    return NULL;
+  *mesinit = '\0';
+  *message = mesinit + 1;
+
+  char * end;
+  *val = strtol(valstr, &end, 10);
+  if (*val == 0 && end == valstr)
+    return NULL;
+
+  return (mesinit + strlen(*message) + 1);
 }

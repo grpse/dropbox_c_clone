@@ -47,62 +47,78 @@ int login(char * username, int sock){
   return n;
 }
 
-// Entra com o ponteiro sem a mensagem
-// Mensagem: *"nome" datahoramodif tamanho
-char * get_file_info(char * buffer, char ** fname, char ** mtime, int * fsize){
-  *fname = strchr(buffer, '\"');
-  if (*fname == NULL)
-    return NULL;
+int sock;
+int connect_server(char * host, int port){
+  struct sockaddr_in serv_addr;
+  struct hostent *server;
+  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1){
+    printf("ERROR opening socket\n");
+    exit(1);
+  }
 
-  (*fname) ++;
+  server = gethostbyname(host);
+  if (server == NULL) {
+    fprintf(stderr,"ERROR, no such host\n");
+    exit(0);
+  }
 
-  *mtime = strchr(*fname, '\"');
-  if (*mtime == NULL)
-    return NULL;
+  serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_addr = *((struct in_addr *)server->h_addr);
+	bzero(&(serv_addr.sin_zero), 8);
 
-  (*mtime) += 2;
-
-  *((*mtime) - 2) = '\0';
-
-  char * fsize_str = strchr(*mtime, ' ');
-  if (fsize_str == NULL)
-    return NULL;
-  fsize_str = strchr(fsize_str + 1, ' ');
-  if (fsize_str == NULL)
-    return NULL;
-  *(fsize_str++) = '\0';
-
-  char * end;
-  *fsize = strtol(fsize_str, &end, 10);
-  if (*fsize == 0 && end == fsize_str)
-    return NULL;
-
-  return end;
+  return connect(sock,(struct sockaddr *) &serv_addr,sizeof(serv_addr));
 }
 
-// Mensagem: "RES valor str"
-char * response_unpack(char * buffer, int * val, char ** message){
-  char * valstr = strchr(buffer, ' ');
-  if (valstr == NULL)
-    return NULL;
-  valstr++;
 
-  char * mesinit = strchr(valstr, ' ');
-  if (mesinit == NULL)
-    return NULL;
-  *mesinit = '\0';
-  *message = mesinit + 1;
+int get_file(char * filename){
+  // Faz get, recebe resposta e segue o baile
+  int n;
+  package_get(filename, buffer_write);
+  n = write_str_to_socket(sock, buffer_write);
+  if (n<0)
+    return -1;
 
-  char * end;
-  *val = strtol(valstr, &end, 10);
-  if (*val == 0 && end == valstr)
-    return NULL;
+  n = read_until_eos(sock, buffer_read);
+  if (n<0)
+    return -1;
 
-  return (mesinit + strlen(*message) + 1);
+  int rval;
+  char * rvalstr;
+  if(response_unpack(buffer_read, &rval, &rvalstr) == NULL)
+    return -1;
+
+  //printf("%d %s\n", rval, rvalstr);
+  if (rval >= 0){
+    // Arquivo virá
+    char * fname;
+    char * mtime;
+    int fsize;
+    n = read_until_eos(sock, buffer_read);
+    if(get_file_info(buffer_read, &fname, &mtime, &fsize) == NULL)
+      return -1;
+
+    remove(filename);
+
+    if(read_and_save_to_file(sock, filename, fsize) < 0)
+      return -1;
+
+    // Ajusta a hora de modificação
+    struct utimbuf ntime;
+    struct tm modtime;
+    bzero(&modtime, sizeof(modtime));
+    strptime(mtime, "%F %T", &modtime);
+    time_t modif_time = mktime(&modtime);
+    ntime.actime = modif_time;
+    ntime.modtime = modif_time;
+    if (utime(filename, &ntime) < 0)
+      return -1;
+  }
+  return 1;
 }
 
 const char * base_dir = "~/";
-int get_sync_dir(char * username, int sock){
+int sync_client(char * username){
   struct passwd *pw = getpwuid(getuid());
   int n;
   char path_user[PATH_MAX], filename[PATH_MAX], time_modif[MAX_USERID];
@@ -147,49 +163,59 @@ int get_sync_dir(char * username, int sock){
           // Arquivo não existe no diretório ou é diferente
           // printf("File %s not exist or different.\n", fname);
           // Pede arquivo que é diferente
-          package_get(fname, buffer_write);
-          n = write_str_to_socket(sock, buffer_write);
-          if (n<0)
+          // Salva diretorio corrente
+          getcwd(filename, sizeof(filename));
+          // Troca pro diretorio path_user
+          chdir(path_user);
+          n = get_file(fname);
+          // Retorna diretorio
+          chdir(filename);
+          if (n < 0)
             return -1;
 
-          n = read_until_eos(sock, buffer_read);
-          if (n<0)
-            return -1;
-
-          int rval;
-          char * rvalstr;
-          if(response_unpack(buffer_read, &rval, &rvalstr) == NULL)
-            return -1;
-
-          //printf("%d %s\n", rval, rvalstr);
-          if (rval >= 0){
-            // Arquivo virá
-            n = read_until_eos(sock, buffer_read);
-            if(get_file_info(buffer_read, &fname, &mtime, &fsize) == NULL)
-              return -1;
-
-            if (ret != -1){
-              if(remove(filename) < 0)
-                return -1;
-            }
-            // puts(filename);
-
-            if(read_and_save_to_file(sock, filename, fsize) < 0)
-              return -1;
-
-            // Ajusta a hora de modificação
-            struct utimbuf ntime;
-            struct tm modtime;
-            bzero(&modtime, sizeof(modtime));
-            strptime(mtime, "%F %T", &modtime);
-            time_t modif_time = mktime(&modtime);
-            ntime.actime = modif_time;
-            ntime.modtime = modif_time;
-            if (utime(filename, &ntime) < 0)
-              return -1;
-          }
-          else
-            return -1;
+          // package_get(fname, buffer_write);
+          // n = write_str_to_socket(sock, buffer_write);
+          // if (n<0)
+          //   return -1;
+          //
+          // n = read_until_eos(sock, buffer_read);
+          // if (n<0)
+          //   return -1;
+          //
+          // int rval;
+          // char * rvalstr;
+          // if(response_unpack(buffer_read, &rval, &rvalstr) == NULL)
+          //   return -1;
+          //
+          // //printf("%d %s\n", rval, rvalstr);
+          // if (rval >= 0){
+          //   // Arquivo virá
+          //   n = read_until_eos(sock, buffer_read);
+          //   if(get_file_info(buffer_read, &fname, &mtime, &fsize) == NULL)
+          //     return -1;
+          //
+          //   if (ret != -1){
+          //     if(remove(filename) < 0)
+          //       return -1;
+          //   }
+          //   // puts(filename);
+          //
+          //   if(read_and_save_to_file(sock, filename, fsize) < 0)
+          //     return -1;
+          //
+          //   // Ajusta a hora de modificação
+          //   struct utimbuf ntime;
+          //   struct tm modtime;
+          //   bzero(&modtime, sizeof(modtime));
+          //   strptime(mtime, "%F %T", &modtime);
+          //   time_t modif_time = mktime(&modtime);
+          //   ntime.actime = modif_time;
+          //   ntime.modtime = modif_time;
+          //   if (utime(filename, &ntime) < 0)
+          //     return -1;
+          // }
+          // else
+          //   return -1;
         }
       }
     }
@@ -199,30 +225,7 @@ int get_sync_dir(char * username, int sock){
   return 0;
 }
 
-int sockfd;
-int connect_server(char * host, int port){
-  struct sockaddr_in serv_addr;
-  struct hostent *server;
-  if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
-    printf("ERROR opening socket\n");
-    exit(1);
-  }
-
-  server = gethostbyname(host);
-  if (server == NULL) {
-    fprintf(stderr,"ERROR, no such host\n");
-    exit(0);
-  }
-
-  serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(PORT);
-	serv_addr.sin_addr = *((struct in_addr *)server->h_addr);
-	bzero(&(serv_addr.sin_zero), 8);
-
-  return connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr));
-}
-
-void list_files(int sock){
+void list_files(){
   int n;
 
   package_ls(buffer_write);
@@ -238,11 +241,98 @@ void list_files(int sock){
     puts("Error reading");
   }else{
     char *init = strchr(buffer_read, ' ');
-    if(init != NULL){
+    printf("%-44s %20s %12s\n", "---Filename---", "-----Mod. Time-----", "---Size---");
+    while(init != NULL){
       init++;
-      puts(init);
+      // puts(init);
+      char * fname;
+      char * mtime;
+      int fsize;
+      init = get_file_info(init, &fname, &mtime, &fsize);
+      if (init != NULL){
+        printf("%-44s %20s %12d\n", fname, mtime, fsize);
+      }
     }
   }
+}
+
+int send_file(char * filename){
+  int n;
+  char time_modif[MAX_USERID];
+  struct stat attr;
+  if (stat(filename, &attr) < 0)
+    return -1;
+
+  strftime(time_modif, MAX_USERID, "%F %T", localtime(&attr.st_mtime));
+
+  char * fname = strrchr(filename, '/');
+  fname = fname == NULL ? filename : fname + 1;
+
+  package_upload(fname, buffer_write);
+  write_str_to_socket(sock, buffer_write);
+
+  // Espera por resposta
+  n = read_until_eos(sock, buffer_read);
+  if (n < 0)
+    return -1;
+
+  int res_val;
+  char * res_str;
+  if (response_unpack(buffer_read, &res_val, &res_str) == NULL)
+    return -1;
+
+  if (res_val == 1){
+    // Permitido envio de arquivo
+    puts(res_str);
+
+    package_file(fname, time_modif, attr.st_size, buffer_write);
+    write_str_to_socket(sock, buffer_write);
+
+    write_file_to_socket(sock, filename, attr.st_size);
+
+    n = read_until_eos(sock, buffer_read);
+    if (n < 0 || response_unpack(buffer_read, &res_val, &res_str) == NULL)
+      return -1;
+
+    printf("File sended. Status received: %s\n", res_str);
+  }
+}
+
+int delete_file(char * filename){
+  // Faz get, recebe resposta e segue o baile
+  int n;
+  package_delete(filename, buffer_write);
+  n = write_str_to_socket(sock, buffer_write);
+  if (n<0)
+    return -1;
+
+  n = read_until_eos(sock, buffer_read);
+  if (n<0)
+    return -1;
+
+  int rval;
+  char * rvalstr;
+  if(response_unpack(buffer_read, &rval, &rvalstr) == NULL)
+    return -1;
+  puts(rvalstr);
+  return 0;
+}
+
+int close_connection(){
+  puts("Exiting...");
+  package_close(buffer_write);
+  write_str_to_socket(sock, buffer_write);
+  if (read_until_eos(sock, buffer_read) < 0)
+    puts("Erro saindo");
+  else{
+    int res;
+    char *mes;
+    response_unpack(buffer_read, &res, &mes);
+    puts(mes);
+    if (res == 1)
+      return 1;
+  }
+  return -1;
 }
 
 int main(int argc, char *argv[])
@@ -251,9 +341,8 @@ int main(int argc, char *argv[])
   struct sockaddr_in serv_addr;
   struct hostent *server;
 
-  char buffer[256];
-  char message[2048];
-  char buffer_read[(MAX_USERID*3 + 20) * MAXFILES + 5];
+  char buffer_console[2048];
+
   if (argc < 2) {
     fprintf(stderr,"usage %s username\n", argv[0]);
     exit(0);
@@ -265,13 +354,13 @@ int main(int argc, char *argv[])
     exit(0);
   }
 
-  n = login(argv[1], sockfd);
+  n = login(argv[1], sock);
 
   if (n < 0){
     puts("Exiting...");
     exit(1);
   }
-  if (get_sync_dir(argv[1], sockfd) < 0){
+  if (sync_client(argv[1]) < 0){
     puts("Impossible synchronize folders! Exiting...");
     exit(1);
   }
@@ -280,27 +369,49 @@ int main(int argc, char *argv[])
 
   while(1){
     printf("> ");
-    bzero(buffer, 255);
-    ptr = fgets(buffer, 255, stdin);
-    strtok(buffer, "\r\n");
-    //puts(buffer);
+    // bzero(buffer, 255);
+    ptr = fgets(buffer_console, sizeof(buffer_console), stdin);
+    strtok(buffer_console, "\r\n");
 
-    //package_get(buffer, message);
+    char * f_esp = strchr(buffer_console, ' ');
+    if (f_esp != NULL){
+      *(f_esp++) = '\0';
+      if (strcmp("upload", buffer_console) == 0){
+        // Envia arquivo
+        if(send_file(f_esp) < 0)
+          puts("Error sending file.");
+      }
+      else if (strcmp("download", buffer_console) == 0){
+        // Recebe arquivo
+        if(get_file(f_esp) < 0)
+          puts("Error downloading file.");
+        else
+          puts("Success on download file.");
+      }
+      else if (strcmp("delete", buffer_console) == 0){
+        // Deleta arquivo
+        if(delete_file(f_esp) < 0)
+          puts("Error deleting file.");
 
-    n = write_str_to_socket(sockfd, buffer);
-    if (n < 0)
-      printf("ERROR writing to socket\n");
-
-    if(buffer[0] == 'L' && buffer[1] == 'S' && buffer[2] == ' '){
-      n = read_until_eos(sockfd, buffer_read);
-      if(n<0){
-        puts("Erro no read");
-      }else{
-        puts(buffer_read);
+        sync_client(argv[1]);
       }
     }
-
+    if (strcmp("list", buffer_console) == 0){
+      // Lista arquivos
+      list_files();
+    }
+    else if (strcmp("get_sync_dir", buffer_console) == 0){
+      // Sincroniza diretórios
+      if (sync_client(argv[1]) >= 0)
+        puts("Directories are synchronized.");
+      else
+        puts("Error synchronizing directories.");
+    }
+    else if (strcmp("exit", buffer_console) == 0){
+      if (close_connection() >= 0)
+        break;
+    }
   }
-	close(sockfd);
+	close(sock);
   return 0;
 }

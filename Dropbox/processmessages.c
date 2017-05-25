@@ -10,6 +10,10 @@
 #include <netinet/in.h>
 #include <limits.h>
 
+#define __USE_XOPEN
+#include <time.h>
+#include <utime.h>
+
 #include "packager.h"
 #include "dropboxUtil.h"
 //#include "userlist.h"
@@ -199,6 +203,129 @@ void process_get(char * message, struct client * cli, int sock){
   }
 }
 
+void process_upload(char * message, struct client * cli, int sock){
+  // Retira informação da mensagem
+
+  // Por enquanto, só aceita a mensagem e espera pelo arquivo
+  char buffer[512];
+  package_response(1, "Ready to receive.", buffer);
+  write_str_to_socket(sock, buffer);
+
+  // Espera por mensagem FILE
+  int n;
+  n = read_until_eos(sock, buffer);
+  if (n < 0 )
+    return;
+
+  char * fs_espace = strchr(buffer, ' ');
+  if (fs_espace == NULL)
+    return;
+
+  *(fs_espace++) = '\0';
+  if (strcmp(MES_FILE, buffer) != 0)
+    return;
+
+  char * fname;
+  char * mtime;
+  int fsize;
+  if (get_file_info(fs_espace, &fname, &mtime, &fsize) == NULL)
+    return;
+
+  char filename[PATH_MAX];
+  sprintf(filename, "%s%s", cli->path_user, fname);
+
+  if(read_and_save_to_file(sock, filename, fsize) < 0){
+    package_response(-1, "Error saving file", buffer);
+    write_str_to_socket(sock, buffer);
+    return;
+  }
+  // Ajusta a hora de modificação
+  struct utimbuf ntime;
+  struct tm modtime;
+  bzero(&modtime, sizeof(modtime));
+  strptime(mtime, "%F %T", &modtime);
+  time_t modif_time = mktime(&modtime);
+  ntime.actime = modif_time;
+  ntime.modtime = modif_time;
+  if (utime(filename, &ntime) < 0){
+    package_response(-1, "Error saving file", buffer);
+    write_str_to_socket(sock, buffer);
+    return;
+  }
+
+  // Por fim, salva na estrutura
+  // No fim, pois se algo der errado não salvará na estrutura de arquivos
+  int i;
+  int free_to_write;
+  for (i = 0; i < MAXFILES; i++){
+    free_to_write = 0;
+    file_init_read(&cli->files[i]);
+    if (cli->files[i].name[0] == '\0')
+      free_to_write = 1;
+    file_end_read(&cli->files[i]);
+    if (free_to_write){
+      file_init_write(&cli->files[i]);
+      strcpy(cli->files[i].name, fname);
+      char *ext = strrchr(fname, '.');
+      if (ext != NULL)
+        strcpy(cli->files[i].extension, ext + 1);
+      strcpy(cli->files[i].last_modified, mtime);
+      cli->files[i].size = fsize;
+      file_end_write(&cli->files[i]);
+      break;
+    }
+  }
+
+  package_response(1, "Success saved file", buffer);
+  write_str_to_socket(sock, buffer);
+}
+
+void process_delete(char * message, struct client * cli, int sock){
+  char * init_filename = strchr(message, '\"');
+
+  if (init_filename == NULL)
+    return;
+  init_filename++;
+  char * end_filename = strchr(init_filename, '\"');
+
+  if (end_filename == NULL)
+    return;
+  *(end_filename) = '\0';
+
+
+  int i;
+  int rem;
+  char send_buf[512];
+  for(i=0; i<MAXFILES; i++){
+    file_init_read(&cli->files[i]);
+    rem = strcmp(cli->files[i].name, init_filename) == 0;
+    file_end_read(&cli->files[i]);
+    if (rem){
+      char filename[PATH_MAX];
+      sprintf(filename, "%s%s", cli->path_user, init_filename);
+      if (remove(filename) < 0){
+        package_response(-1,"Error removing", send_buf);
+        write_str_to_socket(sock, send_buf);
+        return;
+      }
+      file_init_write(&cli->files[i]);
+      bzero(cli->files[i].name, sizeof(cli->files[i].name));
+      bzero(cli->files[i].extension, sizeof(cli->files[i].extension));
+      bzero(cli->files[i].last_modified, sizeof(cli->files[i].last_modified));
+      cli->files[i].size = 0;
+      file_end_write(&cli->files[i]);
+
+      package_response(1,"File deleted", send_buf);
+      write_str_to_socket(sock, send_buf);
+      break;
+    }
+  }
+  if (i==MAXFILES){
+    package_response(-1,"Not exist", send_buf);
+    write_str_to_socket(sock, send_buf);
+  }
+}
+
 void * client_process(void * clsock_ptr){
 	int clsock = *((int *)clsock_ptr);
   //char path_user[PATH_MAX];
@@ -236,6 +363,7 @@ void * client_process(void * clsock_ptr){
 			}else if (cli != NULL){
         // Chega nesse ponto somente quando já está logado
         if(strcmp(MES_LS, str) == 0){
+          client_get_file_info(cli);
           process_ls(cli, clsock);
         }
         else if (strcmp(MES_UPDATED, str) == 0){
@@ -245,7 +373,15 @@ void * client_process(void * clsock_ptr){
         else if (strcmp(MES_GET, str) == 0){
           process_get(espaco, cli, clsock);
         }
+        else if (strcmp(MES_UPLOAD, str) == 0){
+          process_upload(espaco, cli, clsock);
+        }
+        else if (strcmp(MES_DELETE, str) == 0){
+          process_delete(espaco, cli, clsock);
+        }
         else if (strcmp(MES_CLOSE, str) == 0){
+          package_response(1, "Closed connection.", str);
+          write_str_to_socket(clsock, str);
           finish = 1;
         }
       }
