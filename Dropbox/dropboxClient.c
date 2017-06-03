@@ -451,6 +451,11 @@ int delete_file(char *filename)
   return 0;
 }
 
+/**
+Finaliza os recursos e sai do programa corretamente
+tanto para responder ao comando de "exit" como para
+manipular um sinal recebido, como CTRL+C.
+*/
 void finalize_thread_and_close_connection(int exit_code)
 {
     // sinaliza fechar a conexão com o servidor
