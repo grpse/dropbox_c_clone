@@ -123,17 +123,6 @@ CLOSE					|
 #include <netinet/in.h>
 #include "packager.h"
 
-const char * MES_HI =  "HI";
-const char * MES_RESPONSE =  "RES";
-const char * MES_UPDATED =  "UPD";
-const char * MES_LS =  "LS";
-const char * MES_LIST =  "LST";
-const char * MES_GET =  "GET";
-const char * MES_UPLOAD =  "UPL";
-const char * MES_FILE =  "FIL";
-const char * MES_DELETE =  "DEL";
-const char * MES_CLOSE =  "CLS";
-
 // Escreve em buffer o tamanho da string, e depois a string com o \0
 // Para caso de bytes
 void package_string(char * str, char * buffer){
@@ -209,6 +198,12 @@ void package_delete(char * filename, char * buffer){
 
 void package_close(char * buffer){
 	package_message(MES_CLOSE, "", buffer);
+}
+
+void package_exist(char* filename, char* buffer) {
+	char message[512];
+	sprintf(message, "\"%s\"", filename);
+	package_message(MES_EXIST, message, buffer);
 }
 
 // Entra com o ponteiro sem a mensagem
