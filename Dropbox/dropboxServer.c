@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <errno.h>
 
 //#include "packager.h"
 #include "dropboxUtil.h"
@@ -15,7 +16,13 @@
 int main(int argc, char * argv[]){
 	int sockfd, newsockfd, n;
 	socklen_t clilen;
+
+	if (argc < 2) {
+		printf("usage: %s <port>\n", argv[0]);
+	}
 	// char buffer[256];
+	int port = atoi(argv[1]);
+
 
 	init_users();
 
@@ -25,9 +32,13 @@ int main(int argc, char * argv[]){
   	printf("ERROR opening socket\n");
 		exit(1);
 	}
+	
+	int enable = 1;
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
+		perror("setsockopt(SO_REUSEADDR) failed");
 
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_port = htons(port);
 	serv_addr.sin_addr.s_addr = INADDR_ANY;
 	bzero(&(serv_addr.sin_zero), 8);
 

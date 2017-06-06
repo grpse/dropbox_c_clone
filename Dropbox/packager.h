@@ -110,6 +110,9 @@ CLOSE					|
 
 */
 
+/* INCLUDE GUARD */
+#ifndef PACKAGER_H
+#define PACKAGER_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,16 +125,17 @@ CLOSE					|
 #include "dropboxUtil.h"
 
 
-const char * MES_HI;
-const char * MES_RESPONSE;
-const char * MES_UPDATED;
-const char * MES_LS;
-const char * MES_LIST;
-const char * MES_GET;
-const char * MES_UPLOAD;
-const char * MES_FILE;
-const char * MES_DELETE;
-const char * MES_CLOSE;
+#define MES_HI 			"HI"
+#define MES_RESPONSE 	"RES"
+#define MES_UPDATED 	"UPD"
+#define MES_LS 			"LS"
+#define MES_LIST 		"LST"
+#define MES_GET 		"GET"
+#define MES_UPLOAD 		"UPL"
+#define MES_FILE 		"FIL"
+#define MES_DELETE 		"DEL"
+#define MES_CLOSE 		"CLS"
+#define MES_EXIST 		"EST"
 // -----------------------------------------------------------------------------
 // Funções para uso de string
 //void package_message(char * command, char * message, char * buffer);
@@ -161,6 +165,10 @@ void package_delete(char * filename, char * buffer);
 
 void package_close(char * buffer);
 
+void package_exist(char* filename, char* buffer);
+
 // Desenpacotador
 char * get_file_info(char * buffer, char ** fname, char ** mtime, int * fsize);
 char * response_unpack(char * buffer, int * val, char ** message);
+
+#endif /*PACKAGER_H*/
