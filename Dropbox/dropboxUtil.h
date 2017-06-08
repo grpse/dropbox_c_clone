@@ -22,6 +22,14 @@
         pthread_mutex_unlock((&scope_mutex));  \
     } \
 
+#define TRY_LOCK_SCOPE(scope_mutex, scope, elseScope)     \
+    {                                                     \
+        if (pthread_mutex_trylock((&scope_mutex)) == 0) { \
+          {scope;};                                       \
+          pthread_mutex_unlock((&scope_mutex));           \
+        } else { {elseScope;}; }                          \
+    } \
+
 struct file_info {
   char name[MAX_USERID];
   char extension[MAX_USERID];

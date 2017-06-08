@@ -11,6 +11,7 @@ int sync_set = 0;
 int is_first_sync = 1;
 pthread_t file_sync_thread;
 pthread_mutex_t file_sync_mutex;
+pthread_mutex_t try_sync_mutex;
 
 int main(int argc, char *argv[])
 {
@@ -60,6 +61,8 @@ int main(int argc, char *argv[])
     printf("> ");
     ptr = fgets(command_buffer, sizeof(command_buffer), stdin);
     strtok(command_buffer, "\r\n");
+
+    SCOPELOCK()
 
     // Remove comandos com espaços colocando '\0' para finalizar a string
     f_esp = strchr(command_buffer, ' ');
@@ -412,6 +415,11 @@ int send_file(char *file_path)
     if (read_until_eos(sock_g, buffer_read) < 0 ||
         response_unpack(buffer_read, &response_status, &res_str) == NULL)
       return -1;
+
+    // Se foi feito o upload correto, copia para o ~/sync_dir_<username>
+    SCOPELOCK(try_sync_mutex, {
+      file_copy_to_sync_dir(file_path, local_file_name);
+    });
   }
   else
     return -1;
@@ -440,6 +448,12 @@ int delete_file(char *filename)
   char *rvalstr;
   if (response_unpack(buffer_read, &rval, &rvalstr) == NULL)
     return -1;
+  
+  // Removendo o arquivo do servidor, remove também da pasta local
+  SCOPELOCK(try_sync_mutex, {
+    file_remove_from_sync_dir(filename);
+  });
+
   return 0;
 }
 
@@ -521,6 +535,58 @@ int is_get_sync_dir_command(char *command_buffer)
 int is_exit_command(char *command_buffer)
 {
   return strcmp(EXIT, command_buffer) == 0;
+}
+
+int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name) 
+{
+  char dest_file_path[PATH_MAX];
+  get_sync_dir_local_path(dest_file_path);
+
+  sprintf(dest_file_path, "%s/%s", dest_file_path, dest_file_name);
+
+  FILE* source_fd = fopen(source_file_path, "rb");
+  FILE* dest_fd = fopen(dest_file_path, "wb");
+
+  char ch;
+
+  while((ch = fgetc(source_fd)) != EOF)
+    fputc(ch, dest_fd);
+
+  fclose(source_fd);
+  fclose(dest_fd);
+  return 0;
+}
+
+int file_remove_from_sync_dir(char* file_name) 
+{
+    char current_working_path[PATH_MAX];
+    char user_path[PATH_MAX];
+
+    get_sync_dir_local_path(user_path);
+
+    // Salva o diretório corrente
+    if (getcwd(current_working_path, sizeof(current_working_path)) == NULL) {
+      perror("Error on getting cwd:");
+      return -1;
+    }
+
+    // Troca pro diretorio user_path
+    if (chdir(user_path)) {
+      perror("Error on change dir to sync_dir_<username>");
+      return -1;
+    }
+    // remove o arquivo
+    if (remove(file_name) != 0) {
+      perror("Error removing file from sync_dir:");
+      return -1;
+    }
+    // Retorna diretorio para o local do executável
+    if (chdir(current_working_path) < 0) {
+      perror("Error returning from sync_dir:");
+      return -1;
+    }
+
+    return 0;
 }
 
 /*
@@ -637,46 +703,54 @@ void *file_sync_monitor(void *param)
     if (length < 0)
       perror("read");
 
-    // Percorre os eventos gerados do inotify
-    for (int i = 0; i < length; i += EVENT_SIZE + event->len)
+    TRY_LOCK_SCOPE(try_sync_mutex,
     {
-      // localiza evento no buffer de eventos
-      event = (struct inotify_event *)&buffer[i];
-      if (event->len)
+      // Percorre os eventos gerados do inotify
+      for (int i = 0; i < length; i += EVENT_SIZE + event->len)
       {
-        // Teste para eventos de criação,
-        // deleção e modificação de arquivo
-        int accessed = event->mask & IN_ACCESS;
-        int attribute_modified = event->mask & IN_ATTRIB;
-        int created = event->mask & IN_CREATE;
-        int deleted = event->mask & IN_DELETE;
-        int modified = event->mask & IN_MODIFY;
-        int write_closed = event->mask & IN_CLOSE_WRITE;
-        int not_write_closed = event->mask & IN_CLOSE_NOWRITE;
-        int watch_dir_deleted = event->mask & IN_DELETE_SELF;
-        int watch_dir_moved = event->mask & IN_MOVE_SELF;
-        int moved_out = event->mask & IN_MOVED_FROM;
-        int moved_in = event->mask & IN_MOVED_TO;
-        int opened = event->mask & IN_OPEN;
+        // localiza evento no buffer de eventos
+        event = (struct inotify_event *)&buffer[i];
+        if (event->len)
+        {
+          // Teste para eventos de criação,
+          // deleção e modificação de arquivo
+          int accessed = event->mask & IN_ACCESS;
+          int attribute_modified = event->mask & IN_ATTRIB;
+          int created = event->mask & IN_CREATE;
+          int deleted = event->mask & IN_DELETE;
+          int modified = event->mask & IN_MODIFY;
+          int write_closed = event->mask & IN_CLOSE_WRITE;
+          int not_write_closed = event->mask & IN_CLOSE_NOWRITE;
+          int watch_dir_deleted = event->mask & IN_DELETE_SELF;
+          int watch_dir_moved = event->mask & IN_MOVE_SELF;
+          int moved_out = event->mask & IN_MOVED_FROM;
+          int moved_in = event->mask & IN_MOVED_TO;
+          int opened = event->mask & IN_OPEN;
 
-        // Descobre o novo caminho do arquivo
-        char filepath[PATH_MAX];
-        sprintf(filepath, "%s/%s", user_path, event->name);
+          // Descobre o novo caminho do arquivo
+          char filepath[PATH_MAX];
+          sprintf(filepath, "%s/%s", user_path, event->name);
 
-        // Se for criado novo arquivo envia ele,
-        // se for deletado, deleta no servidor,
-        // se for modificado, sincroniza com os
-        // arquivos do servidor
-        SCOPELOCK(file_sync_mutex, {
-          if (created || moved_in)
-            send_file(filepath);
-          else if (deleted || moved_out)
-            delete_file(event->name);
-          else if (accessed || opened || not_write_closed || write_closed || modified || watch_dir_moved || watch_dir_deleted || attribute_modified)
-            sync_client(username_g);
-        });
+          // Se for criado novo arquivo envia ele,
+          // se for deletado, deleta no servidor,
+          // se for modificado, sincroniza com os
+          // arquivos do servidor
+          SCOPELOCK(file_sync_mutex, {
+            if (created || moved_in)
+              send_file(filepath);
+            else if (deleted || moved_out)
+              delete_file(event->name);
+            else if (accessed || opened || not_write_closed || write_closed || modified || watch_dir_moved || watch_dir_deleted || attribute_modified)
+              sync_client(username_g);
+          });
+        }
       }
-    }
+    },
+    // Caso o lock já tenha sido adquirido, zera o buffer de eventos
+    {
+      // Zero o buffer caso de eventos
+      memset(buffer, 0, BUF_LEN);
+    });
 
     // zera o buffer de eventos
     memset(buffer, 0, BUF_LEN);
