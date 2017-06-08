@@ -62,8 +62,6 @@ int main(int argc, char *argv[])
     ptr = fgets(command_buffer, sizeof(command_buffer), stdin);
     strtok(command_buffer, "\r\n");
 
-    SCOPELOCK()
-
     // Remove comandos com espaços colocando '\0' para finalizar a string
     f_esp = strchr(command_buffer, ' ');
     if (f_esp != NULL)
