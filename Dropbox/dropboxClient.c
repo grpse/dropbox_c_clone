@@ -68,6 +68,7 @@ int main(int argc, char *argv[])
       *(f_esp++) = '\0';
 
     // Identifica comando utilizado e explicita caso haja algum erro
+    SCOPELOCK(file_sync_mutex, {
     if (is_upload_command(command_buffer))
     {
       if (send_file(f_esp) < 0)
@@ -101,13 +102,14 @@ int main(int argc, char *argv[])
       finalize_thread_and_close_connection(-1);
       break;
     }
+    });
   }
 
   return 0;
 }
 
 /*
-Conecta cliente ao servidor. 
+Conecta cliente ao servidor.
 Recebe o host e a porta para fazer conexão.
 retorna > 0 se a conexão ocorreu com sucesso.
 */
@@ -119,7 +121,7 @@ int connect_server(char *host, int port)
   if (sock_g < 0)
     return -1;
 
-  // traduz o hostname de string para uma 
+  // traduz o hostname de string para uma
   // struct hostent*
   server = gethostbyname(host);
   if (server == NULL)
@@ -135,7 +137,7 @@ int connect_server(char *host, int port)
 
 /*
 Faz o login do usuário no servidor
-enviando o nome do usuário em um 
+enviando o nome do usuário em um
 pacote "HI".
 Retorna 0 caso tenha sucesso e -1
 caso tenha ocorrido algum erro.
@@ -220,8 +222,8 @@ int get_file(char *filename)
 }
 
 /*
-Sincroniza os arquivos locais com os do servidor, 
-pela data da última modificação. A operação é 
+Sincroniza os arquivos locais com os do servidor,
+pela data da última modificação. A operação é
 feita por arquivo. Caso um arquivo local seja
 mais novo é feito o upload deste, caso mais
 antigo ou não exista um equivalente local,
@@ -415,9 +417,13 @@ int send_file(char *file_path)
       return -1;
 
     // Se foi feito o upload correto, copia para o ~/sync_dir_<username>
-    SCOPELOCK(try_sync_mutex, {
-      file_copy_to_sync_dir(file_path, local_file_name);
-    });
+    if (sync_set){
+      TRY_LOCK_SCOPE(try_sync_mutex, {
+        file_copy_to_sync_dir(file_path, local_file_name);
+      }, {
+        file_copy_to_sync_dir(file_path, local_file_name);
+      });
+    }
   }
   else
     return -1;
@@ -446,11 +452,17 @@ int delete_file(char *filename)
   char *rvalstr;
   if (response_unpack(buffer_read, &rval, &rvalstr) == NULL)
     return -1;
-  
+
   // Removendo o arquivo do servidor, remove também da pasta local
-  SCOPELOCK(try_sync_mutex, {
-    file_remove_from_sync_dir(filename);
-  });
+  if (sync_set){
+
+
+    TRY_LOCK_SCOPE(try_sync_mutex, {
+      file_remove_from_sync_dir(filename);
+    }, {
+      file_remove_from_sync_dir(filename);
+    });
+  }
 
   return 0;
 }
@@ -535,27 +547,29 @@ int is_exit_command(char *command_buffer)
   return strcmp(EXIT, command_buffer) == 0;
 }
 
-int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name) 
+int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name)
 {
   char dest_file_path[PATH_MAX];
   get_sync_dir_local_path(dest_file_path);
 
   sprintf(dest_file_path, "%s/%s", dest_file_path, dest_file_name);
 
-  FILE* source_fd = fopen(source_file_path, "rb");
-  FILE* dest_fd = fopen(dest_file_path, "wb");
+  if(strcmp(source_file_path, dest_file_path) != 0){
+    FILE* source_fd = fopen(source_file_path, "rb");
+    FILE* dest_fd = fopen(dest_file_path, "wb");
 
-  char ch;
+    char ch;
 
-  while((ch = fgetc(source_fd)) != EOF)
-    fputc(ch, dest_fd);
+    while((ch = fgetc(source_fd)) != EOF)
+      fputc(ch, dest_fd);
 
-  fclose(source_fd);
-  fclose(dest_fd);
+    fclose(source_fd);
+    fclose(dest_fd);
+  }
   return 0;
 }
 
-int file_remove_from_sync_dir(char* file_name) 
+int file_remove_from_sync_dir(char* file_name)
 {
     char current_working_path[PATH_MAX];
     char user_path[PATH_MAX];
@@ -575,7 +589,7 @@ int file_remove_from_sync_dir(char* file_name)
     }
     // remove o arquivo
     if (remove(file_name) != 0) {
-      perror("Error removing file from sync_dir:");
+      // perror("Error removing file from sync_dir:");
       return -1;
     }
     // Retorna diretorio para o local do executável
@@ -665,13 +679,13 @@ int first_sync_local_files(char *user_path)
     }
     closedir(dir);
   }
-  
+
   return 0;
 }
 
 /*
 Inicia uma instância do monitor de diretório com a api do inotify
-e toma as decisões de fazer upload, deletar ou sincronizar os 
+e toma as decisões de fazer upload, deletar ou sincronizar os
 arquivos da pasta "~/sync_dir_<username>".
 */
 void *file_sync_monitor(void *param)
@@ -701,6 +715,8 @@ void *file_sync_monitor(void *param)
     if (length < 0)
       perror("read");
 
+    // TODO: Veririfcar pq o evento "create" está sendo lançado com o arquivo com 0 bytes
+    sleep(1);
     TRY_LOCK_SCOPE(try_sync_mutex,
     {
       // Percorre os eventos gerados do inotify
@@ -738,8 +754,8 @@ void *file_sync_monitor(void *param)
               send_file(filepath);
             else if (deleted || moved_out)
               delete_file(event->name);
-            else if (accessed || opened || not_write_closed || write_closed || modified || watch_dir_moved || watch_dir_deleted || attribute_modified)
-              sync_client(username_g);
+            else if (modified)
+              send_file(filepath);
           });
         }
       }
