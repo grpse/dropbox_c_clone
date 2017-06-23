@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
     SCOPELOCK(file_sync_mutex, {
     if (is_upload_command(command_buffer))
     {
-      if (send_file(f_esp) < 0)
+      if (file_copy_to_sync_dir(f_esp, strrchr(f_esp, '/')) < 0)
         perror("Error sending file.");
     }
     else if (is_download_command(command_buffer))
@@ -93,6 +93,11 @@ int main(int argc, char *argv[])
     }
     else if (is_get_sync_dir_command(command_buffer))
     {
+      // Reinicializa sincronização
+      // Caso tenham mudanças no servidor feitas pelo mesmo cliente em outra máquina,
+      // elas serão trazidas
+      pthread_cancel(file_sync_thread);
+      sync_set = 0;
       start_sync_monitor();
     }
     else if (is_exit_command(command_buffer))
@@ -169,21 +174,25 @@ Faz download de um arquivo presente no servidor
 para a pasta onde está a execução do programa.
 Retorna 0 caso tenha sucesso e -1 caso tenha
 ocorrido algum erro.
+Usado buffer interno para recepção, pois o
+ponteiro de filename está no buffer_read global,
+o que, algumas vezes gerava erros na execução
 */
 int get_file(char *filename)
 {
   int response_status;
   char *rvalstr;
+  char buffer_read_2[1024];
   // Enpacota o comando "get"
   package_get(filename, buffer_write);
   // envia o comando "get"
   if (write_str_to_socket(sock_g, buffer_write) < 0)
     return -1;
   // recebe a resposta do servidor
-  if (read_until_eos(sock_g, buffer_read) < 0)
+  if (read_until_eos(sock_g, buffer_read_2) < 0)
     return -1;
   // desenpacota o a resposta do servidor
-  if (response_unpack(buffer_read, &response_status, &rvalstr) == NULL)
+  if (response_unpack(buffer_read_2, &response_status, &rvalstr) == NULL)
     return -1;
   // se permitido, obtém o arquivo
   if (response_status >= 0)
@@ -193,13 +202,14 @@ int get_file(char *filename)
     char *remote_file_last_modification;
     int fsize;
     // recebe os dados do arquivo
-    if (read_until_eos(sock_g, buffer_read) < 0)
+    if (read_until_eos(sock_g, buffer_read_2) < 0)
       return -1;
     // obtém os dados do arquivo
-    if (get_file_info(buffer_read, &remote_filename, &remote_file_last_modification, &fsize) == NULL)
+    if (get_file_info(buffer_read_2, &remote_filename, &remote_file_last_modification, &fsize) == NULL)
       return -1;
-    // se houve algum arquivo com o mesmo nome no diretório correte, remove-o
+    // se houve algum arquivo com o mesmo nome no diretório corrente, remove-o
     remove(filename);
+
     // efetua o download do arquivo remoto para o diretório corrente
     if (read_and_save_to_file(sock_g, filename, fsize) < 0)
       return -1;
@@ -274,6 +284,7 @@ int sync_client(char *username)
       char local_file_last_time_modification[MAX_USERID];
       char *DATE_FORMAT = "%Y-%m-%d %H:%M:%S";
 
+
       // Obtém os atributos do arquivo local
       sprintf(file_path, "%s/%s", user_path, remote_file_name);
       int ret = stat(file_path, &local_file_attributes);
@@ -300,10 +311,16 @@ int sync_client(char *username)
         char *result_file_name = getcwd(file_path, sizeof(file_path));
         // Troca pro diretorio user_path
         n = chdir(user_path);
+        if (n < 0){
+        	puts("Erro chdir");
+        	return -1;
+        }
         // faz download do arquivo do servidor
         n = get_file(remote_file_name);
-        if (n < 0)
+        if (n < 0){
+          n = chdir(file_path);
           return -1;
+        }
         // Retorna diretorio para o local do executável
         n = chdir(file_path);
       }
@@ -369,6 +386,9 @@ int list_files()
 Envia um arquivo local para o servidor.
 Retorna 0 para sucesso.
 Retorna -1 caso tenha ocorrido algum erro.
+Usado buffer interno para recepção, pois o
+ponteiro de filename está no buffer_read global,
+o que, algumas vezes gerava erros na execução
 */
 int send_file(char *file_path)
 {
@@ -376,6 +396,7 @@ int send_file(char *file_path)
   char *res_str;
   char time_modif[MAX_USERID];
   struct stat local_file_attributes;
+  char buffer_read_2[1024];
 
   // Captura os atributos do arquivo local
   if (stat(file_path, &local_file_attributes) < 0)
@@ -395,10 +416,10 @@ int send_file(char *file_path)
   if (write_str_to_socket(sock_g, buffer_write) < 0)
     return -1;
   // recebe a resposta do comando "upload"
-  if (read_until_eos(sock_g, buffer_read) < 0)
+  if (read_until_eos(sock_g, buffer_read_2) < 0)
     return -1;
   // desenpacota a resposta ao comando
-  if (response_unpack(buffer_read, &response_status, &res_str) == NULL)
+  if (response_unpack(buffer_read_2, &response_status, &res_str) == NULL)
     return -1;
   // se o servidor permitiu o envio do arquivo
   if (response_status == 1)
@@ -412,8 +433,8 @@ int send_file(char *file_path)
     if (write_file_to_socket(sock_g, file_path, local_file_attributes.st_size) < 0)
       return -1;
     // aguarda uma resposta
-    if (read_until_eos(sock_g, buffer_read) < 0 ||
-        response_unpack(buffer_read, &response_status, &res_str) == NULL)
+    if (read_until_eos(sock_g, buffer_read_2) < 0 ||
+        response_unpack(buffer_read_2, &response_status, &res_str) == NULL)
       return -1;
 
     // Se foi feito o upload correto, copia para o ~/sync_dir_<username>
@@ -455,8 +476,6 @@ int delete_file(char *filename)
 
   // Removendo o arquivo do servidor, remove também da pasta local
   if (sync_set){
-
-
     TRY_LOCK_SCOPE(try_sync_mutex, {
       file_remove_from_sync_dir(filename);
     }, {
@@ -555,16 +574,20 @@ int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name)
   sprintf(dest_file_path, "%s/%s", dest_file_path, dest_file_name);
 
   if(strcmp(source_file_path, dest_file_path) != 0){
-    FILE* source_fd = fopen(source_file_path, "rb");
-    FILE* dest_fd = fopen(dest_file_path, "wb");
+    remove(dest_file_path);
 
-    char ch;
+    int source_fd = open(source_file_path, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    int dest_fd = -1;
+    if ((dest_fd = creat(dest_file_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0 || source_fd < 0)
+  		return -1;
 
-    while((ch = fgetc(source_fd)) != EOF)
-      fputc(ch, dest_fd);
-
-    fclose(source_fd);
-    fclose(dest_fd);
+    char buffer_copy[1024];
+    int readed;
+    while((readed = read(source_fd, buffer_copy, sizeof(buffer_copy))) > 0){
+      write(dest_fd, buffer_copy, readed);
+    }
+    close(source_fd);
+    close(dest_fd);
   }
   return 0;
 }
@@ -637,9 +660,9 @@ int first_sync_local_files(char *user_path)
 {
   DIR *dir;
   struct dirent *ent;
-  char file_name_send_buffer[PATH_MAX];
+  char file_name_send_buffer[PATH_MAX + 32];
   char response_buffer[10];
-  char file_names[MAXFILES][PATH_MAX];
+  //char file_names[MAXFILES][PATH_MAX];
   char file_name_with_path[PATH_MAX];
 
   // Lista os arquivos do diretório "sync_dir_<username>" local do usuário
@@ -687,6 +710,12 @@ int first_sync_local_files(char *user_path)
 Inicia uma instância do monitor de diretório com a api do inotify
 e toma as decisões de fazer upload, deletar ou sincronizar os
 arquivos da pasta "~/sync_dir_<username>".
+
+Usa ao invés da informação de created e modified, a informação de
+write_closed, e, a partir de um fim de escrita, envia arquivo ao servidor
+Garante que, quando um arquivo vier como copiado, e gerar um evento de create,
+mas ainda esteja escrevendo no arquivo, que o arquivo somente seja enviado
+quando terminar de escrevê-lo.
 */
 void *file_sync_monitor(void *param)
 {
@@ -716,7 +745,7 @@ void *file_sync_monitor(void *param)
       perror("read");
 
     // TODO: Veririfcar pq o evento "create" está sendo lançado com o arquivo com 0 bytes
-    sleep(1);
+    //sleep(1);
     TRY_LOCK_SCOPE(try_sync_mutex,
     {
       // Percorre os eventos gerados do inotify
@@ -745,17 +774,13 @@ void *file_sync_monitor(void *param)
           char filepath[PATH_MAX];
           sprintf(filepath, "%s/%s", user_path, event->name);
 
-          // Se for criado novo arquivo envia ele,
-          // se for deletado, deleta no servidor,
-          // se for modificado, sincroniza com os
-          // arquivos do servidor
+          // Se for escrito em um arquivo, envia ele
+          // Se for deletado, deleta no servidor
           SCOPELOCK(file_sync_mutex, {
-            if (created || moved_in)
-              send_file(filepath);
+            if (write_closed || moved_in)
+              send_file(filepath); /*sync_client(username_g);*/
             else if (deleted || moved_out)
               delete_file(event->name);
-            else if (modified)
-              send_file(filepath);
           });
         }
       }

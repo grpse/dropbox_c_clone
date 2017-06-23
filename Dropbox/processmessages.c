@@ -313,13 +313,12 @@ void process_upload(char *message, struct client *cli, int sock)
   for (i = 0; i < MAXFILES; i++)
   {
     free_to_write = 0;
-    file_init_read(&cli->files[i]);
+    file_init_write(&cli->files[i]);
     if (cli->files[i].name[0] == '\0')
       free_to_write = 1;
-    file_end_read(&cli->files[i]);
+
     if (free_to_write)
     {
-      file_init_write(&cli->files[i]);
       strcpy(cli->files[i].name, fname);
       char *ext = strrchr(fname, '.');
       if (ext != NULL)
@@ -329,6 +328,7 @@ void process_upload(char *message, struct client *cli, int sock)
       file_end_write(&cli->files[i]);
       break;
     }
+    file_end_write(&cli->files[i]);
   }
 
   package_response(1, "Success saved file", buffer);
@@ -353,9 +353,8 @@ void process_delete(char *message, struct client *cli, int sock)
   char send_buf[512];
   for (i = 0; i < MAXFILES; i++)
   {
-    file_init_read(&cli->files[i]);
+    file_init_write(&cli->files[i]);
     rem = strcmp(cli->files[i].name, init_filename) == 0;
-    file_end_read(&cli->files[i]);
     if (rem)
     {
       char filename[PATH_MAX];
@@ -366,7 +365,7 @@ void process_delete(char *message, struct client *cli, int sock)
         write_str_to_socket(sock, send_buf);
         return;
       }
-      file_init_write(&cli->files[i]);
+      // file_init_write(&cli->files[i]);
       bzero(cli->files[i].name, sizeof(cli->files[i].name));
       bzero(cli->files[i].extension, sizeof(cli->files[i].extension));
       bzero(cli->files[i].last_modified, sizeof(cli->files[i].last_modified));
@@ -377,6 +376,7 @@ void process_delete(char *message, struct client *cli, int sock)
       write_str_to_socket(sock, send_buf);
       break;
     }
+    file_end_write(&cli->files[i]);
   }
   if (i == MAXFILES)
   {
@@ -398,14 +398,17 @@ void process_exist(char *message, struct client *cli, int sock)
   // Busca o arquivo por nome na lista de arquivos do usuário...
   for (file_index = 0; file_index < MAXFILES; file_index++)
   {
+    file_init_read(&cli->files[file_index]);
     if (cli->files[file_index].name[0] != '\0')
     {
       if (strcmp(cli->files[file_index].name, file_name) == 0)
       {
         exist = 1;
+        file_end_read(&cli->files[file_index]);
         break;
       }
     }
+    file_end_read(&cli->files[file_index]);
   }
 
   // Se existe escreve "true", senão "false" no socket aberto
