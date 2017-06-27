@@ -50,6 +50,7 @@ struct client {
   pthread_mutex_t config_mtx;
 };
 
+int read_until_eos_buffered(int sock, char * buffer);
 int read_until_eos(int sock, char * buffer);
 int read_n_from_socket(int n, int sock, char *buffer);
 int write_str_to_socket(int sock, char * str);

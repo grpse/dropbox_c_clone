@@ -9,6 +9,29 @@
 #include <netinet/in.h>
 #include <errno.h>
 
+int read_until_eos_buffered(int sock, char * buffer){
+	int i = 0;
+	int r = 0;
+	char buffered[1024];
+	int buffer_size = sizeof(buffered);
+	do{
+		r = read(sock, buffered, buffer_size);
+		memcpy((buffer + i), buffered, r);
+
+		if (r < 0)
+			return -1;
+		else if (r == 0)
+			break;
+		else if (r < buffer_size)
+			break;
+
+		i += r;
+
+	}while(1);
+
+	return i;
+}
+
 int read_n_from_socket(int n, int sock, char *buffer){
 	int i = 0;
 	int r = 0;

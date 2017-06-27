@@ -65,5 +65,9 @@ int start_sync_monitor();
 int first_sync_local_files(char *user_path);
 void *file_sync_monitor(void *);
 void get_sync_dir_local_path(char *out_user_path);
+void *auto_sync_files(void *);
+
+// Faz uma requisição de hora ao time server na porta + 1
+time_t get_time_server();
 
 #endif /*DROPBOXCLIENT_H*/

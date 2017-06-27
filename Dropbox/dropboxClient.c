@@ -2,13 +2,16 @@
 
 // Variáveis globais
 int sock_g;
+int port_g;
 char *username_g;
+char *hostname_g;
 char buffer_read[(MAX_USERID * 3 + 20) * MAXFILES + 5];
 char buffer_write[2048];
 
 // Variáveis para a sincronização de arquivos
 int sync_set = 0;
 int is_first_sync = 1;
+pthread_t auto_sync_thread;
 pthread_t file_sync_thread;
 pthread_mutex_t file_sync_mutex;
 pthread_mutex_t try_sync_mutex;
@@ -18,8 +21,8 @@ int main(int argc, char *argv[])
 
   char command_buffer[2048] = "";
   username_g = argv[1];
-  char *hostname = argv[2];
-  int port = atoi(argv[3]);
+  hostname_g = argv[2];
+  port_g = atoi(argv[3]);
 
   if (argc < 4)
   {
@@ -27,7 +30,8 @@ int main(int argc, char *argv[])
     exit(0);
   }
 
-  if (connect_server(hostname, port) < 0)
+  sock_g = connect_server(hostname_g, port_g);
+  if (sock_g < 0)
   {
     printf("ERROR connecting\n");
     exit(0);
@@ -69,44 +73,44 @@ int main(int argc, char *argv[])
 
     // Identifica comando utilizado e explicita caso haja algum erro
     SCOPELOCK(file_sync_mutex, {
-    if (is_upload_command(command_buffer))
-    {
-      if (file_copy_to_sync_dir(f_esp, strrchr(f_esp, '/')) < 0)
-        perror("Error sending file.");
-    }
-    else if (is_download_command(command_buffer))
-    {
-      if (get_file(f_esp) < 0)
-        perror("Error downloading file.");
-    }
-    else if (is_delete_command(command_buffer))
-    {
-      if (delete_file(f_esp) < 0)
-        perror("Error deleting file.");
-      if (sync_set && sync_client(username_g) < 0)
-        perror("Error synchronizing directories.");
-    }
-    else if (is_list_command(command_buffer))
-    {
-      if (list_files() < 0)
-        perror("Error on list files");
-    }
-    else if (is_get_sync_dir_command(command_buffer))
-    {
-      // Reinicializa sincronização
-      // Caso tenham mudanças no servidor feitas pelo mesmo cliente em outra máquina,
-      // elas serão trazidas
-      pthread_cancel(file_sync_thread);
-      sync_set = 0;
-      start_sync_monitor();
-    }
-    else if (is_exit_command(command_buffer))
-    {
-      // WARNING: Precisa ser o finalizador do main
-      // para lidar com o sinais corretamente
-      finalize_thread_and_close_connection(-1);
-      break;
-    }
+      if (is_upload_command(command_buffer))
+      {
+        if (file_copy_to_sync_dir(f_esp, strrchr(f_esp, '/')) < 0)
+          perror("Error sending file.");
+      }
+      else if (is_download_command(command_buffer))
+      {
+        if (get_file(f_esp) < 0)
+          perror("Error downloading file.");
+      }
+      else if (is_delete_command(command_buffer))
+      {
+        if (delete_file(f_esp) < 0)
+          perror("Error deleting file.");
+        if (sync_set && sync_client(username_g) < 0)
+          perror("Error synchronizing directories.");
+      }
+      else if (is_list_command(command_buffer))
+      {
+        if (list_files() < 0)
+          perror("Error on list files");
+      }
+      else if (is_get_sync_dir_command(command_buffer))
+      {
+        // Reinicializa sincronização
+        // Caso tenham mudanças no servidor feitas pelo mesmo cliente em outra máquina,
+        // elas serão trazidas
+        pthread_cancel(file_sync_thread);
+        sync_set = 0;
+        start_sync_monitor();
+      }
+      else if (is_exit_command(command_buffer))
+      {
+        // WARNING: Precisa ser o finalizador do main
+        // para lidar com o sinais corretamente
+        finalize_thread_and_close_connection(-1);
+        break;
+      }
     });
   }
 
@@ -122,8 +126,8 @@ int connect_server(char *host, int port)
 {
   struct sockaddr_in serv_addr;
   struct hostent *server;
-  sock_g = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock_g < 0)
+  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0)
     return -1;
 
   // traduz o hostname de string para uma
@@ -137,7 +141,10 @@ int connect_server(char *host, int port)
   serv_addr.sin_addr = *((struct in_addr *)server->h_addr);
   bzero(&(serv_addr.sin_zero), 8);
   // ... para fazer chamar a função connect
-  return connect(sock_g, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+  if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    return -1;
+
+  return sockfd;
 }
 
 /*
@@ -159,7 +166,7 @@ int login(char *username)
     return -1;
   // desenpacota a resposta
   int response_status;
-  char* response_value;
+  char *response_value;
   if (response_unpack(buffer_read, &response_status, &response_value) == NULL)
     return -1;
   // imprime a resposta e verifica se o login foi feito de forma correta
@@ -284,7 +291,6 @@ int sync_client(char *username)
       char local_file_last_time_modification[MAX_USERID];
       char *DATE_FORMAT = "%Y-%m-%d %H:%M:%S";
 
-
       // Obtém os atributos do arquivo local
       sprintf(file_path, "%s/%s", user_path, remote_file_name);
       int ret = stat(file_path, &local_file_attributes);
@@ -311,13 +317,15 @@ int sync_client(char *username)
         char *result_file_name = getcwd(file_path, sizeof(file_path));
         // Troca pro diretorio user_path
         n = chdir(user_path);
-        if (n < 0){
-        	puts("Erro chdir");
-        	return -1;
+        if (n < 0)
+        {
+          puts("Erro chdir");
+          return -1;
         }
         // faz download do arquivo do servidor
         n = get_file(remote_file_name);
-        if (n < 0){
+        if (n < 0)
+        {
           n = chdir(file_path);
           return -1;
         }
@@ -438,12 +446,9 @@ int send_file(char *file_path)
       return -1;
 
     // Se foi feito o upload correto, copia para o ~/sync_dir_<username>
-    if (sync_set){
-      TRY_LOCK_SCOPE(try_sync_mutex, {
-        file_copy_to_sync_dir(file_path, local_file_name);
-      }, {
-        file_copy_to_sync_dir(file_path, local_file_name);
-      });
+    if (sync_set)
+    {
+      TRY_LOCK_SCOPE(try_sync_mutex, { file_copy_to_sync_dir(file_path, local_file_name); }, { file_copy_to_sync_dir(file_path, local_file_name); });
     }
   }
   else
@@ -475,12 +480,9 @@ int delete_file(char *filename)
     return -1;
 
   // Removendo o arquivo do servidor, remove também da pasta local
-  if (sync_set){
-    TRY_LOCK_SCOPE(try_sync_mutex, {
-      file_remove_from_sync_dir(filename);
-    }, {
-      file_remove_from_sync_dir(filename);
-    });
+  if (sync_set)
+  {
+    TRY_LOCK_SCOPE(try_sync_mutex, { file_remove_from_sync_dir(filename); }, { file_remove_from_sync_dir(filename); });
   }
 
   return 0;
@@ -499,7 +501,10 @@ void finalize_thread_and_close_connection(int exit_code)
   // Se temos um diretório sincronizada pelo inotify e uma thread
   // cancelamos a execução da thread.
   if (sync_set)
+  {
     pthread_cancel(file_sync_thread);
+    pthread_cancel(auto_sync_thread);
+  }
   // fecha o socket
   close(sock_g);
   // fecha o programa
@@ -566,24 +571,26 @@ int is_exit_command(char *command_buffer)
   return strcmp(EXIT, command_buffer) == 0;
 }
 
-int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name)
+int file_copy_to_sync_dir(char *source_file_path, char *dest_file_name)
 {
   char dest_file_path[PATH_MAX];
   get_sync_dir_local_path(dest_file_path);
 
   sprintf(dest_file_path, "%s/%s", dest_file_path, dest_file_name);
 
-  if(strcmp(source_file_path, dest_file_path) != 0){
+  if (strcmp(source_file_path, dest_file_path) != 0)
+  {
     remove(dest_file_path);
 
     int source_fd = open(source_file_path, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     int dest_fd = -1;
     if ((dest_fd = creat(dest_file_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0 || source_fd < 0)
-  		return -1;
+      return -1;
 
     char buffer_copy[1024];
     int readed;
-    while((readed = read(source_fd, buffer_copy, sizeof(buffer_copy))) > 0){
+    while ((readed = read(source_fd, buffer_copy, sizeof(buffer_copy))) > 0)
+    {
       write(dest_fd, buffer_copy, readed);
     }
     close(source_fd);
@@ -592,36 +599,40 @@ int file_copy_to_sync_dir(char* source_file_path, char* dest_file_name)
   return 0;
 }
 
-int file_remove_from_sync_dir(char* file_name)
+int file_remove_from_sync_dir(char *file_name)
 {
-    char current_working_path[PATH_MAX];
-    char user_path[PATH_MAX];
+  char current_working_path[PATH_MAX];
+  char user_path[PATH_MAX];
 
-    get_sync_dir_local_path(user_path);
+  get_sync_dir_local_path(user_path);
 
-    // Salva o diretório corrente
-    if (getcwd(current_working_path, sizeof(current_working_path)) == NULL) {
-      perror("Error on getting cwd:");
-      return -1;
-    }
+  // Salva o diretório corrente
+  if (getcwd(current_working_path, sizeof(current_working_path)) == NULL)
+  {
+    perror("Error on getting cwd:");
+    return -1;
+  }
 
-    // Troca pro diretorio user_path
-    if (chdir(user_path)) {
-      perror("Error on change dir to sync_dir_<username>");
-      return -1;
-    }
-    // remove o arquivo
-    if (remove(file_name) != 0) {
-      // perror("Error removing file from sync_dir:");
-      return -1;
-    }
-    // Retorna diretorio para o local do executável
-    if (chdir(current_working_path) < 0) {
-      perror("Error returning from sync_dir:");
-      return -1;
-    }
+  // Troca pro diretorio user_path
+  if (chdir(user_path))
+  {
+    perror("Error on change dir to sync_dir_<username>");
+    return -1;
+  }
+  // remove o arquivo
+  if (remove(file_name) != 0)
+  {
+    // perror("Error removing file from sync_dir:");
+    return -1;
+  }
+  // Retorna diretorio para o local do executável
+  if (chdir(current_working_path) < 0)
+  {
+    perror("Error returning from sync_dir:");
+    return -1;
+  }
 
-    return 0;
+  return 0;
 }
 
 /*
@@ -646,6 +657,7 @@ int start_sync_monitor()
     // Sincronização inicial
     sync_client(username_g);
     pthread_create(&file_sync_thread, NULL, file_sync_monitor, NULL);
+    pthread_create(&auto_sync_thread, NULL, auto_sync_files, NULL);
   }
   return 0;
 }
@@ -747,49 +759,49 @@ void *file_sync_monitor(void *param)
     // TODO: Veririfcar pq o evento "create" está sendo lançado com o arquivo com 0 bytes
     //sleep(1);
     TRY_LOCK_SCOPE(try_sync_mutex,
-    {
-      // Percorre os eventos gerados do inotify
-      for (int i = 0; i < length; i += EVENT_SIZE + event->len)
-      {
-        // localiza evento no buffer de eventos
-        event = (struct inotify_event *)&buffer[i];
-        if (event->len)
-        {
-          // Teste para eventos de criação,
-          // deleção e modificação de arquivo
-          int accessed = event->mask & IN_ACCESS;
-          int attribute_modified = event->mask & IN_ATTRIB;
-          int created = event->mask & IN_CREATE;
-          int deleted = event->mask & IN_DELETE;
-          int modified = event->mask & IN_MODIFY;
-          int write_closed = event->mask & IN_CLOSE_WRITE;
-          int not_write_closed = event->mask & IN_CLOSE_NOWRITE;
-          int watch_dir_deleted = event->mask & IN_DELETE_SELF;
-          int watch_dir_moved = event->mask & IN_MOVE_SELF;
-          int moved_out = event->mask & IN_MOVED_FROM;
-          int moved_in = event->mask & IN_MOVED_TO;
-          int opened = event->mask & IN_OPEN;
+                   {
+                     // Percorre os eventos gerados do inotify
+                     for (int i = 0; i < length; i += EVENT_SIZE + event->len)
+                     {
+                       // localiza evento no buffer de eventos
+                       event = (struct inotify_event *)&buffer[i];
+                       if (event->len)
+                       {
+                         // Teste para eventos de criação,
+                         // deleção e modificação de arquivo
+                         int accessed = event->mask & IN_ACCESS;
+                         int attribute_modified = event->mask & IN_ATTRIB;
+                         int created = event->mask & IN_CREATE;
+                         int deleted = event->mask & IN_DELETE;
+                         int modified = event->mask & IN_MODIFY;
+                         int write_closed = event->mask & IN_CLOSE_WRITE;
+                         int not_write_closed = event->mask & IN_CLOSE_NOWRITE;
+                         int watch_dir_deleted = event->mask & IN_DELETE_SELF;
+                         int watch_dir_moved = event->mask & IN_MOVE_SELF;
+                         int moved_out = event->mask & IN_MOVED_FROM;
+                         int moved_in = event->mask & IN_MOVED_TO;
+                         int opened = event->mask & IN_OPEN;
 
-          // Descobre o novo caminho do arquivo
-          char filepath[PATH_MAX];
-          sprintf(filepath, "%s/%s", user_path, event->name);
+                         // Descobre o novo caminho do arquivo
+                         char filepath[PATH_MAX];
+                         sprintf(filepath, "%s/%s", user_path, event->name);
 
-          // Se for escrito em um arquivo, envia ele
-          // Se for deletado, deleta no servidor
-          SCOPELOCK(file_sync_mutex, {
-            if (write_closed || moved_in)
-              send_file(filepath); /*sync_client(username_g);*/
-            else if (deleted || moved_out)
-              delete_file(event->name);
-          });
-        }
-      }
-    },
-    // Caso o lock já tenha sido adquirido, zera o buffer de eventos
-    {
-      // Zero o buffer caso de eventos
-      memset(buffer, 0, BUF_LEN);
-    });
+                         // Se for escrito em um arquivo, envia ele
+                         // Se for deletado, deleta no servidor
+                         SCOPELOCK(file_sync_mutex, {
+                           if (write_closed || moved_in)
+                             send_file(filepath); /*sync_client(username_g);*/
+                           else if (deleted || moved_out)
+                             delete_file(event->name);
+                         });
+                       }
+                     }
+                   },
+                   // Caso o lock já tenha sido adquirido, zera o buffer de eventos
+                   {
+                     // Zero o buffer caso de eventos
+                     memset(buffer, 0, BUF_LEN);
+                   });
 
     // zera o buffer de eventos
     memset(buffer, 0, BUF_LEN);
@@ -809,4 +821,49 @@ void get_sync_dir_local_path(char *out_user_path)
 {
   struct passwd *pw = getpwuid(getuid());
   sprintf(out_user_path, "%s/sync_dir_%s", pw->pw_dir, username_g);
+}
+
+void *auto_sync_files(void *args)
+{
+  while (1)
+  {
+    sleep(5);
+    SCOPELOCK(try_sync_mutex, {
+      SCOPELOCK(file_sync_mutex, {
+        // printf("Syncing...\n");
+        sync_client(username_g);
+      });
+    });
+  }
+}
+
+time_t get_time_server()
+{
+  time_t rawtime, T0, T1;
+  int port_time_server = port_g + 1;
+  char buffer[256] = "TIME";
+  int time_server_socket = 0;
+
+  // get current time, connect to time server
+  // and obtain current time from server
+  time(&T0);
+
+  time_server_socket = connect_server(hostname_g, port_time_server);
+
+  if (time_server_socket < 0)
+  {
+    printf("Time server not available. Using local time\n");
+    time(&rawtime);
+    return rawtime;
+  }
+
+  // read raw time, get final time after receive
+  // response, calculate christian and return
+  read_until_eos_buffered(time_server_socket, buffer);
+  time(&T1);
+  sscanf(buffer, "%lu", &rawtime);
+
+  close(time_server_socket);
+
+  return rawtime + (T1 - T0) / 2.0;
 }
