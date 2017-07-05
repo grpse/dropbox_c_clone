@@ -8,3 +8,6 @@ client:
 
 clean:
 	rm bin/dropboxClient bin/dropboxServer
+
+server_debug:
+	gcc -std=gnu99 -o bin/dropboxServer -pthread -O3 dropboxServer.c client.c dropboxUtil.c packager.c processmessages.c -ggdb

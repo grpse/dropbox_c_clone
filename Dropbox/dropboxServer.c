@@ -1,24 +1,59 @@
 #include "dropboxServer.h"
 
 pthread_t time_server_thread;
+pthread_t replica_sends_heart_beat;
+pthread_t replica_receives_heart_beat;
+
+#define COMPARE_EQUAL_STRING(str1, str2) strcmp((str1), (str2)) == 0
 
 int main(int argc, char *argv[])
 {
-	assert(argc == 2);
+	assert(argc >= 3);
 
-	if (argc < 2)
-		printf("usage: %s <port>\n", argv[0]);
+	if (argc < 3) 
+	{
+		printf("usage: %s [main|replica <main host>] <port>\n", argv[0]);
+		return 1;
+	}
+	
+	char* type = argv[1];
+	
+	if (COMPARE_EQUAL_STRING(type, "main"))
+	{
+		int port = atoi(argv[2]);
+		int port_time_server = port + 1;
+		// Create time server process
+		pthread_create(&time_server_thread, NULL, time_server, (void*)&port_time_server);
+	
+		int execution_status = wait_for_dropbox_client_connections(port);
+		// se ocorreu uma falha ...
+		if (execution_status < 0) return -1;	
+	}
+	else if (COMPARE_EQUAL_STRING(type, "replica"))
+	{
+		int ip_list_count;
+		char* ip_list[10];
+		get_ip_list((char**)ip_list, &ip_list_count);
+		
+		printf("%s\n", ip_list[0]);
+		printf("%d\n", ip_list_count);
+	}
+	
+	return 0;
+}
 
+int start_as_replica_server(char* main_host, int main_port)
+{
+	
+}
+
+int wait_for_dropbox_client_connections(int wait_port)
+{
 	init_users();
 
-	int port = atoi(argv[1]);
-	int port_time_server = port + 1;
-	int sockfd = create_tcp_server(port);
+	int sockfd = create_tcp_server(wait_port);
 	if (sockfd < 0)
 		exit(-1);
-
-	// Create time server process
-	pthread_create(&time_server_thread, NULL, time_server, (void*)&port_time_server);
 
 	struct sockaddr_in cli_addr;
 	socklen_t clilen = sizeof(struct sockaddr_in);
@@ -30,7 +65,7 @@ int main(int argc, char *argv[])
 		if (*newsockfd < 0)
 		{
 			printf("ERROR on accept");
-			exit(1);
+			return -1;
 		}
 
 		pthread_t thc;
@@ -125,4 +160,72 @@ int create_tcp_server(int port)
 	}
 
 	return sockfd;
+}
+
+
+
+void get_ip_list(char** ip_list, int* ip_list_count)
+{
+	*ip_list_count = 0;
+	struct ifaddrs *ifaddr, *ifa;
+	int family, s, n;
+	char host[NI_MAXHOST];
+	
+	if (getifaddrs(&ifaddr) == -1) {
+		perror("getifaddrs");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Walk through linked list, maintaining head pointer so we
+	can free list later */
+	
+	for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
+		if (ifa->ifa_addr == NULL)
+			continue;
+
+       family = ifa->ifa_addr->sa_family;
+
+       /* Display interface name and family (including symbolic
+          form of the latter for the common families) */
+
+       //printf("%-8s %s (%d)\n",
+       //       ifa->ifa_name,
+       //       (family == AF_PACKET) ? "AF_PACKET" :
+       //       (family == AF_INET) ? "AF_INET" :
+       //       (family == AF_INET6) ? "AF_INET6" : "???",
+       //       family);
+
+       /* For an AF_INET* interface address, display the address */
+
+       if (family == AF_INET || family == AF_INET6) {
+           s = getnameinfo(ifa->ifa_addr,
+                   (family == AF_INET) ? sizeof(struct sockaddr_in) :
+                                         sizeof(struct sockaddr_in6),
+                   host, NI_MAXHOST,
+                   NULL, 0, NI_NUMERICHOST);
+           if (s != 0) {
+               printf("getnameinfo() failed: %s\n", gai_strerror(s));
+               exit(EXIT_FAILURE);
+           }
+			
+			// se for ipv4 e a interface for eth? (regex) adiciona o host na lista
+			if (family == AF_INET && (COMPARE_EQUAL_STRING(ifa->ifa_name, "eth0") || COMPARE_EQUAL_STRING(ifa->ifa_name, "eth1"))) {
+				ip_list[*ip_list_count] = (char*)malloc(sizeof(char) * strlen(host) + 2);
+				strcpy(ip_list[*ip_list_count], host);
+				*ip_list_count = *ip_list_count + 1;
+			}
+			
+           //printf("\t\taddress: <%s>\n", host);
+
+       } else if (family == AF_PACKET && ifa->ifa_data != NULL) {
+           struct rtnl_link_stats *stats = ifa->ifa_data;
+
+           //printf("\t\ttx_packets = %10u; rx_packets = %10u\n"
+           //       "\t\ttx_bytes   = %10u; rx_bytes   = %10u\n",
+           //       stats->tx_packets, stats->rx_packets,
+           //       stats->tx_bytes, stats->rx_bytes);
+       }
+   }
+
+   freeifaddrs(ifaddr);
 }
