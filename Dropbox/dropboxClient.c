@@ -111,40 +111,15 @@ int main(int argc, char *argv[])
         finalize_thread_and_close_connection(-1);
         break;
       }
+      else if (is_get_time_command(command_buffer))
+      {
+        time_t current_time = get_time_server();
+        printf("\r%lu\n", current_time);
+      }
     });
   }
 
   return 0;
-}
-
-/*
-Conecta cliente ao servidor.
-Recebe o host e a porta para fazer conexão.
-retorna > 0 se a conexão ocorreu com sucesso.
-*/
-int connect_server(char *host, int port)
-{
-  struct sockaddr_in serv_addr;
-  struct hostent *server;
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd < 0)
-    return -1;
-
-  // traduz o hostname de string para uma
-  // struct hostent*
-  server = gethostbyname(host);
-  if (server == NULL)
-    return -1;
-  // preenche a estrutura de sockaddr...
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(port);
-  serv_addr.sin_addr = *((struct in_addr *)server->h_addr);
-  bzero(&(serv_addr.sin_zero), 8);
-  // ... para fazer chamar a função connect
-  if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-    return -1;
-
-  return sockfd;
 }
 
 /*
@@ -569,6 +544,12 @@ int is_get_sync_dir_command(char *command_buffer)
 int is_exit_command(char *command_buffer)
 {
   return strcmp(EXIT, command_buffer) == 0;
+}
+
+//verifica se é do tipo de commando para obter o timestamp
+int is_get_time_command(char *command_buffer)
+{
+  return strcmp(GET_TIME, command_buffer) == 0;
 }
 
 int file_copy_to_sync_dir(char *source_file_path, char *dest_file_name)

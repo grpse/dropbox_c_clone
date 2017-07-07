@@ -3,6 +3,20 @@
 
 #include <time.h>
 #include <limits.h>
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <linux/if_link.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 #define USERNAME_MAX 64
 #define MESSAGE_MAX 64
@@ -14,21 +28,24 @@
 #define PORT 9000
 #define BUF_SIZE 2048
 
+#define COMPARE_EQUAL_STRING(str1, str2) (strcmp((str1), (str2)) == 0)
+#define IS_IFACE_ETH(name) (strlen((name)) >= 3 && (name)[0] == 'e' && (name)[1] == 't' && (name)[2] == 'h')
+
 // Mutex scope lock
 #define SCOPELOCK(scope_mutex, scope)         \
     {                                         \
         pthread_mutex_lock((&scope_mutex));    \
         {scope;};                             \
         pthread_mutex_unlock((&scope_mutex));  \
-    } \
-
+    }
+    
 #define TRY_LOCK_SCOPE(scope_mutex, scope, elseScope)     \
     {                                                     \
         if (pthread_mutex_trylock((&scope_mutex)) == 0) { \
           {scope;};                                       \
           pthread_mutex_unlock((&scope_mutex));           \
         } else { {elseScope;}; }                          \
-    } \
+    }
 
 struct file_info {
   char name[MAX_USERID];
@@ -56,5 +73,36 @@ int read_n_from_socket(int n, int sock, char *buffer);
 int write_str_to_socket(int sock, char * str);
 int read_and_save_to_file(int sock, char * filename, int fsize);
 int write_file_to_socket(int sock, char * filename, int fsize);
+
+
+
+struct PortAndFunc {
+  int port;
+  void* (*execute_client)(void* args);
+};
+
+// cria um tcp server e executa threads com uma função para tratar novas conexões
+// executa uma thread para cada nova conexão, mas bloqueia essa função.
+void execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args));
+
+// cria um tcp server e executa threads com uma função para tratar novas conexões
+// executa uma thread para cada nova conexão e não bloqueia a execução.
+pthread_t execute_tcp_server_listener_nonblock(int port, void* (*execute_client)(void* args));
+
+// Executa um servidor TCP em segunda instância e aguada novas conexões para processar em outra thread
+void* __execute_tcp_server_listener_nonblock(void* args);
+
+// funções compartilhadas
+int connect_server(char *host, int port);
+int create_tcp_server(int port);
+
+// executar função em outra thread sem precisar de um thread create
+pthread_t async_executor(void* args, void*(*async_execute)(void* args));
+
+/** 
+ * Recebe por parâmetro de saída uma lista de ip's, separados por \n
+ * atribuidos às interfaces ETHx e retorna a quantidade de ip's.
+*/
+int get_ip_list(char* ip_list);
 
 #endif /*DROPBOXUTIL_H*/
