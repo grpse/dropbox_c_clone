@@ -62,10 +62,7 @@ int read_until_eos(int sock, char * buffer){
 }
 
 int write_str_to_socket(int sock, char * str){
-	int n;
-
-	n = write(sock, str, strlen(str) + 1);
-	return n;
+	return write(sock, str, strlen(str) + 1);
 }
 
 int read_and_save_to_file(int sock, char * filename, int fsize){
@@ -155,12 +152,23 @@ int write_file_to_socket(int sock, char * filename, int fsize){
 	return 1;
 }
 
+// Lê um numero do socket
+int read_int_from_socket(int sock, int* number)
+{
+	char number_str[16];
+	read_until_eos(sock, number_str);
+	sscanf(number_str, "%d", number);
+}
+
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão, mas bloqueia essa função.
-void execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args))
+int execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args))
 {
+	int* returnStatus;
 	pthread_t execution_thread = execute_tcp_server_listener_nonblock(port, execute_client);
-	pthread_join(execution_thread, NULL);
+	pthread_join(execution_thread, (void**)&returnStatus);
+	
+	return *returnStatus;
 }
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
@@ -373,4 +381,42 @@ int get_ip_list(char* ip_list)
    }
 
    freeifaddrs(ifaddr);
+}
+
+
+void get_peer_ip_address(int sock, char* ip_buffer)
+{
+	// assume s is a connected socket
+	socklen_t len;
+	struct sockaddr_storage addr;
+	char ipstr[INET6_ADDRSTRLEN];
+	int port;
+	
+	len = sizeof addr;
+	getpeername(sock, (struct sockaddr*)&addr, &len);
+	
+	// deal with both IPv4 and IPv6:
+	if (addr.ss_family == AF_INET) {
+	    struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+	    port = ntohs(s->sin_port);
+	    inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+	} else { // AF_INET6
+	    struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
+	    port = ntohs(s->sin6_port);
+	    inet_ntop(AF_INET6, &s->sin6_addr, ipstr, sizeof ipstr);
+	}
+	
+	printf("Peer IP address: %s\n", ipstr);
+	printf("Peer port      : %d\n", port);
+	
+	strcpy(ip_buffer, ipstr);
+}
+
+
+int is_socket_disconnected(int sockfd)
+{
+	int error = 0;
+	socklen_t len = sizeof (error);
+	int retval = getsockopt (sockfd, SOL_SOCKET, SO_ERROR, &error, &len);
+	return retval != 0 || error != 0;
 }

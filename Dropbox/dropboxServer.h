@@ -20,8 +20,30 @@
 #include "dropboxUtil.h"
 #include "processmessages.h"
 
+struct ReplicasUpdateVerifyParams{
+    char* main_host;
+    int main_port;
+    int sockfd;
+    int my_order;
+    pthread_t update_thread;
+};
+
+void* client_intermediate_process(void* args);
 int start_as_replica_server(char* main_host, int main_port);
+void* replicas_update_ips_list(void* args);
 void* receive_replica_files(void* args);
 void* time_server_client_process(void* sock_ptr);
+void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams);
+void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicasUpdateVerifyParams);
 
+pthread_t start_all_main_services_starting_at_port(int main_port);
+
+#define wait_for_dropbox_client_connections(port) execute_tcp_server_listener_block((port), client_process)
+#define wait_for_dropbox_client_connections_nonblock(port) execute_tcp_server_listener_nonblock((port), client_process)
+
+#define get_my_ip(ip_buffer) get_ip_list((ip_buffer))
+#define send_clients_ip_list(sockfd, clients_ip_list) write_str_to_socket((sockfd), (clients_ip_list))
+#define send_replica_order(sockfd, order) write_int_to_socket((sockfd), (order))                                             
+#define receive_my_replica_order(sockfd, order) read_int_from_socket((sockfd), (order))    
+    
 #endif /*DROPBOXSERVER_H*/

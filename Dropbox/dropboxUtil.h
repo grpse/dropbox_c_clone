@@ -47,6 +47,17 @@
         } else { {elseScope;}; }                          \
     }
 
+
+typedef int bool;
+
+#define TRUE 1
+#define FALSE 0
+
+enum BoolValues{
+  true = TRUE,
+  false = FALSE
+};
+
 struct file_info {
   char name[MAX_USERID];
   char extension[MAX_USERID];
@@ -74,6 +85,14 @@ int write_str_to_socket(int sock, char * str);
 int read_and_save_to_file(int sock, char * filename, int fsize);
 int write_file_to_socket(int sock, char * filename, int fsize);
 
+int read_int_from_socket(int sock, int* number);
+
+#define write_int_to_socket(sockfd, number)         \
+    {                                               \
+        char number_str[16];                        \
+        sprintf(number_str, "%d", (number));        \
+        write_str_to_socket((sockfd), number_str);  \
+    }   
 
 
 struct PortAndFunc {
@@ -83,7 +102,7 @@ struct PortAndFunc {
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão, mas bloqueia essa função.
-void execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args));
+int execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args));
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão e não bloqueia a execução.
@@ -104,5 +123,9 @@ pthread_t async_executor(void* args, void*(*async_execute)(void* args));
  * atribuidos às interfaces ETHx e retorna a quantidade de ip's.
 */
 int get_ip_list(char* ip_list);
+
+void get_peer_ip_address(int sock, char* ip_buffer);
+
+int is_socket_disconnected(int sockfd);
 
 #endif /*DROPBOXUTIL_H*/
