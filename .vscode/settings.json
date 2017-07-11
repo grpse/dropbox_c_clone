@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "dropboxserver.h": "c",
+        "dropboxutil.h": "c",
+        "libio.h": "c",
+        "client.h": "c",
+        "string.h": "c",
+        "string2.h": "c",
+        "pthread.h": "c"
+    }
+}

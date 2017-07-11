@@ -84,39 +84,54 @@ int start_as_replica_server(char* main_host, int main_port)
 	
 	int heart_beat_port = main_port + 2;
 	int sockfd = connect_server(main_host, heart_beat_port);
-	
-	
+
+
 	printf("host:port > %s:%d\n", main_host, heart_beat_port);
 	printf("Socket: %d\n", sockfd);
-	if (sockfd > 0)
-	{
-		// send my ips to server
-		int my_order = -1;
-		char my_ip[16];
-		get_my_ip(my_ip);
-		write_str_to_socket(sockfd, my_ip);
-		printf("Start Replica. My ip: %s\n", my_ip);
-		// receive my order number as main server
-		receive_my_replica_order(sockfd, &my_order);
-		printf("My order on replicas list: %d\n", my_order);
-		// start waiting, in another thread, for files replica requests
-		// TODO: receive_replica_files_thread = async_executor(&sockfd, receive_replica_files);
+
+	// TODO: Start file replica server to accept main server files transaction
+	// send my ips to server
+	int my_order = -1;
+	char my_ip[16];
+	get_my_ip(my_ip);
+	write_str_to_socket(sockfd, my_ip);
+	printf("Start Replica. My ip: %s\n", my_ip);
+	// receive my order number as main server
+	receive_my_replica_order(sockfd, &my_order);
+	printf("My order on replicas list: %d\n", my_order);
+
+	struct ReplicasUpdateVerifyParams* params = (struct ReplicasUpdateVerifyParams*)calloc(1, sizeof(struct ReplicasUpdateVerifyParams));
 		
-		// pass to next 2 threads the same environment (host, port, socket and disconnection status(to close update thread on disconnection))
-		struct ReplicasUpdateVerifyParams* params = (struct ReplicasUpdateVerifyParams*)calloc(1, sizeof(struct ReplicasUpdateVerifyParams));
-		
-		params->main_host = main_host;
-		params->main_port = main_port;
-		params->sockfd = sockfd;
-		params->my_order = my_order;
-		
-		params->update_thread = async_executor(params, update_replicas_and_clients_ip_list);
+	params->main_host = main_host;
+	params->main_port = main_port;
+	params->sockfd = sockfd;
+	params->my_order = my_order;
+	strcpy(params->next_host, params->main_host);
+
+	while (true)
+	{			
+		// pass to next 2 threads the same environment (host, port, socket and disconnection status(to close update thread on disconnection))		
+		pthread_t update_replica_thread = params->update_thread = async_executor(params, update_replicas_and_clients_ip_list);
 		pthread_t verify_socket_disconnection = async_executor(params, verifying_disconnection_to_reconnect_or_turn_it_main_server);
 		
-		// wait 2 last threads to finish
-		//pthread_join(update_replicas_thread, NULL);
-		pthread_join(verify_socket_disconnection, NULL);
-		// TODO: cancel both threads, this is a loop to reconnect if it still is a replica
+		// wait last thread to finish
+		pthread_join(verify_socket_disconnection, (void**)&params);
+
+		// become master
+		if (params == NULL) 
+		{
+			printf("Me turning into main....\n");
+			pthread_cancel(update_replica_thread);
+			free(params);
+			break;
+		}
+		else 
+		{
+			printf("Me connecting to the new server...\"%s\"\n", params->next_host);
+			sleep(5);
+			params->sockfd = sockfd = connect_server(params->next_host, heart_beat_port);
+			pthread_cancel(update_replica_thread);
+		}
 
 		free(params);
 	}
@@ -142,19 +157,15 @@ int start_as_replica_server(char* main_host, int main_port)
 void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams)
 {
 	struct ReplicasUpdateVerifyParams params = *(struct ReplicasUpdateVerifyParams*)replicasUpdateVerifyParams;
-	
-	char* main_host = params.main_host;
-	int main_port = params.main_port;
+
 	int sockfd = params.sockfd;
 	// enable the possibility to cancel this thread
 	int s1 = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	int s2 = pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 	printf("this_thread_is_now_cancelable\n");
 	
-	while(1)
+	while(true)
 	{
-		sleep(5);
-
 		// receives server replicas ip lists update
 		char message_buffer[4096] = "get_replicas_ip_list";
 		int write_return = write_str_to_socket(sockfd, message_buffer);
@@ -163,6 +174,7 @@ void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams)
 		// update replicas ip lists
 		SCOPELOCK(receive_ip_mutex, {
 			strcpy(replicas_ip_list, message_buffer);
+			last_replica_order = get_new_last_order(replicas_ip_list);
 		});
 		
 		printf("local_replicas_ip_list: \n%s\n", replicas_ip_list);
@@ -178,18 +190,20 @@ void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams)
 		});
 		
 		printf("local_clients_ip_list: \n%s\n", clients_ip_list);
+
+		sleep(5);
 	}
 }
 
 void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicasUpdateVerifyParams)
 {
-	struct ReplicasUpdateVerifyParams params = *(struct ReplicasUpdateVerifyParams*)replicasUpdateVerifyParams;
+	struct ReplicasUpdateVerifyParams* params = (struct ReplicasUpdateVerifyParams*)replicasUpdateVerifyParams;
 	
-	char* main_host = params.main_host;
-	int main_port = params.main_port;
-	int sockfd = params.sockfd;
-	int my_order = params.my_order;
-	pthread_t update_replicas_thread = params.update_thread;
+	char* main_host = params->main_host;
+	int main_port = params->main_port;
+	int sockfd = params->sockfd;
+	int my_order = params->my_order;
+	pthread_t update_replicas_thread = params->update_thread;
 	int heart_beat_port = main_port + 2;
 	
 	
@@ -208,7 +222,7 @@ void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicas
 			//	2 - 
 			//		2.1 - if it's me, break this while loop and start waiting for dropbox connections
 			//		2.2 - if not, wait 5 seconds and try connect to the new main server
-			bool should_break_and_cancel_updates_thread = false;
+			bool its_my_time = false;
 			
 			SCOPELOCK(receive_ip_mutex, {
 				// copy first ip address and test order verify if it's not mine
@@ -219,9 +233,10 @@ void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicas
 				
 				if (my_order == next_in_order)
 				{
-					should_break_and_cancel_updates_thread = true;
+					its_my_time = true;					
 				}
-				else if (strlen(replicas_ip_list) > 3)
+				
+				if (strlen(replicas_ip_list) > 3)
 				{
 					printf("ips: \n%s\n", replicas_ip_list);
 					char *ip_start = strstr(replicas_ip_list, ":") + 1;
@@ -235,31 +250,63 @@ void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicas
 					char next_ip[32];
 					
 					memcpy(next_ip, ip_start, ip_str_len);
-					
-					printf("next ip: %s\n", next_ip);
-					
-					sockfd = connect_server(next_ip, heart_beat_port);
-					
-					//TODO: Need to break update thread before connect again, because
-					//		read will be locked.
+					next_ip[ip_str_len] = '\0';
+
+					strcpy(params->next_host, next_ip);
+					printf("next ip: \"%s\"\n", params->next_host);
 				}
 				
 			});
-			
-			if (should_break_and_cancel_updates_thread){
-				printf("before cancel thread\n");
-				int status = pthread_cancel(update_replicas_thread);
-				printf("pthread_cancel: %d\n", status);
-				printf("after cancel thread\n");
-				break;
+
+			if (its_my_time)
+			{
+				SCOPELOCK(receive_ip_mutex, {
+					// update replicas_ip_list
+					// only new main server can update replicas list to pass to other replicas
+					char *ip_end = strstr(replicas_ip_list, "\n");
+					char *rest_replicas_ip_list = (ip_end + 1);
+					char replicas_temp[4096] = "";
+					memcpy(replicas_temp, rest_replicas_ip_list, strlen(rest_replicas_ip_list));
+					replicas_temp[strlen(rest_replicas_ip_list)] = '\0';
+					
+
+					strcpy(replicas_ip_list, replicas_temp);
+					printf("ip_list_now:\n\"%s\"\n", replicas_temp);
+					printf("ip_list_now:\n\"%s\"\n", replicas_ip_list);
+
+					// update last replica order
+				});
+
+				pthread_exit(NULL);
+			}
+			else
+			{
+				pthread_exit(params);
 			}
 		}
 	}
-	
-	printf("exiting verify...\n");
-	pthread_exit(NULL);
 }
 
+int get_new_last_order(char* replicas_ip_list)
+{
+	int new_last_order = -1;
+	// update last replica order					
+	int i;
+	for (i = strlen(replicas_ip_list) - 1; i >= 0; i--) 
+	{
+		if (replicas_ip_list[i] == ':')
+		{
+			i--;
+			break;
+		}
+	}
+	
+	char *before_last_id = &replicas_ip_list[i];					
+	printf("before_last_id:  \"%s\"\n", before_last_id);
+	sscanf(before_last_id, "%d\n", &new_last_order);
+	printf("new last order: %d\n", new_last_order);
+	return new_last_order;
+}
 
 void* replicas_update_ips_list(void* args)
 {
@@ -267,25 +314,38 @@ void* replicas_update_ips_list(void* args)
 	int exit_status = 0;
 	int sockfd = *(int*)args;
 	
-	read_until_eos_buffered(sockfd, message_buffer);
+	// enable the possibility to cancel this thread
+	int s1 = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+	int s2 = pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 	
 	SCOPELOCK(receive_ip_mutex, {
 		// copy new replica ip to the list
-		char replica_order[16];
-		sprintf(replica_order, "%d", ++last_replica_order);
-		strcat(replicas_ip_list, replica_order);
-		strcat(replicas_ip_list, ":");
-		strcat(replicas_ip_list, message_buffer);
-		strcat(replicas_ip_list, "\n");
-		
-		printf("ip_list: \n%s\n", replicas_ip_list);
+		read_until_eos(sockfd, message_buffer);
+
+		if (!COMPARE_EQUAL_STRING(message_buffer, "get_replicas_ip_list"))
+		{
+			char replica_order[16];
+			sprintf(replica_order, "%d", ++last_replica_order);
+			strcat(replicas_ip_list, replica_order);
+			strcat(replicas_ip_list, ":");
+			strcat(replicas_ip_list, message_buffer);
+			strcat(replicas_ip_list, "\n");
+			
+			printf("ip_list: \n%s\n", replicas_ip_list);
+
+			// send replica it's order
+			write_int_to_socket(sockfd, last_replica_order);
+			printf("Next replica order: %d\n", last_replica_order);
+		}
+		else
+		{
+			// if already ready a replica connection, but reconnecting from here
+			strcpy(message_buffer, clients_ip_list);
+			write_str_to_socket(sockfd, message_buffer);
+		}
 	});
 	
-	// send replica it's order
-	write_int_to_socket(sockfd, last_replica_order);
-	printf("Next replica order: %d\n", last_replica_order);
-	
-	while(1)
+	while(true)
 	{
 		// receive a update command from replicas
 		// TODO: make server wait to read
@@ -304,8 +364,9 @@ void* replicas_update_ips_list(void* args)
 		// send update to replica		
 		int write_return = write_str_to_socket(sockfd, message_buffer);
 
-		if (read_return < 0 || write_return <0)
+		if (read_return < 0 || write_return <0 || errno != 0)
 		{
+			perror("Error sending update:");
 			exit_status = -1;
 			break;
 		}

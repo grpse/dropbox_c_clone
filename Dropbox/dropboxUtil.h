@@ -29,7 +29,8 @@
 #define BUF_SIZE 2048
 
 #define COMPARE_EQUAL_STRING(str1, str2) (strcmp((str1), (str2)) == 0)
-#define IS_IFACE_ETH(name) (strlen((name)) >= 3 && (name)[0] == 'e' && (name)[1] == 't' && (name)[2] == 'h')
+#define IS_IFACE_ETH(name) (strlen((name)) >= 3 && (name)[0] == 'e' && \
+    ((name)[1] == 't' && (name)[2] == 'h') || ((name)[1] == 'n' && (name)[2] == 'p'))
 
 // Mutex scope lock
 #define SCOPELOCK(scope_mutex, scope)         \

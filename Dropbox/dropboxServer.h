@@ -26,6 +26,7 @@ struct ReplicasUpdateVerifyParams{
     int sockfd;
     int my_order;
     pthread_t update_thread;
+    char next_host[16];
 };
 
 void* client_intermediate_process(void* args);
@@ -35,6 +36,7 @@ void* receive_replica_files(void* args);
 void* time_server_client_process(void* sock_ptr);
 void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams);
 void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicasUpdateVerifyParams);
+int get_new_last_order(char* replicas_ip_list);
 
 pthread_t start_all_main_services_starting_at_port(int main_port);
 
