@@ -33,6 +33,11 @@ void* client_intermediate_process(void* args);
 int start_as_replica_server(char* main_host, int main_port);
 void* replicas_update_ips_list(void* args);
 void* receive_replica_files(void* args);
+
+int start_replica_transaction(char* command, char* username, char* filename, char* modtime, int filesize );
+int replica_file_get_copy_buffer(char* buffer, int size);
+int commit_replica_transaction(char* command);
+
 void* time_server_client_process(void* sock_ptr);
 void* update_replicas_and_clients_ip_list(void* replicasUpdateVerifyParams);
 void* verifying_disconnection_to_reconnect_or_turn_it_main_server(void* replicasUpdateVerifyParams);

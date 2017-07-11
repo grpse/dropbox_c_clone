@@ -8,6 +8,12 @@ pthread_mutex_t receive_ip_mutex;
 char replicas_ip_list[4096] = "";
 char clients_ip_list[4096] = "";
 int last_replica_order = 0;
+int main_port = 0;
+
+#define MAIN_PORT main_port
+#define TIME_PORT main_port + 1
+#define HEART_PORT main_port + 2
+#define REPLICATION_PORT main_port + 3
 
 int main(int argc, char *argv[])
 {
@@ -25,14 +31,14 @@ int main(int argc, char *argv[])
 	
 	if (COMPARE_EQUAL_STRING(type, "main"))
 	{
-		int port = atoi(argv[2]);
-		pthread_t main_process = start_all_main_services_starting_at_port(port);
+		main_port = atoi(argv[2]);
+		pthread_t main_process = start_all_main_services_starting_at_port(main_port);
 		pthread_join(main_process, NULL);
 	}
 	else if (COMPARE_EQUAL_STRING(type, "replica"))
 	{
 		char* main_host = argv[2];
-		int main_port = atoi(argv[3]);
+		main_port = atoi(argv[3]);
 		int execution_status = start_as_replica_server(main_host, main_port);
 		// se ocorreu uma falha ...
 		if (execution_status < 0) return -1;
@@ -45,9 +51,9 @@ int main(int argc, char *argv[])
 
 pthread_t start_all_main_services_starting_at_port(int main_port)
 {
-	int port = main_port;
-	int port_time_server = main_port + 1;
-	int port_update_replicas = main_port + 2;
+	int port = MAIN_PORT;
+	int port_time_server = TIME_PORT;
+	int port_update_replicas = HEART_PORT;
 	
 	printf("MAIN_PORT: %d\n", port);
 	printf("TIME_PORT: %d\n", port_time_server);
@@ -82,7 +88,7 @@ void* client_intermediate_process(void* args)
 int start_as_replica_server(char* main_host, int main_port)
 {
 	
-	int heart_beat_port = main_port + 2;
+	int heart_beat_port = HEART_PORT;
 	int sockfd = connect_server(main_host, heart_beat_port);
 
 
@@ -90,6 +96,8 @@ int start_as_replica_server(char* main_host, int main_port)
 	printf("Socket: %d\n", sockfd);
 
 	// TODO: Start file replica server to accept main server files transaction
+	pthread_t replication_thread = execute_tcp_server_listener_nonblock(REPLICATION_PORT, receive_replica_files);
+
 	// send my ips to server
 	int my_order = -1;
 	char my_ip[16];
@@ -121,7 +129,6 @@ int start_as_replica_server(char* main_host, int main_port)
 		if (params == NULL) 
 		{
 			printf("Me turning into main....\n");
-			pthread_cancel(update_replica_thread);
 			free(params);
 			break;
 		}
@@ -130,20 +137,21 @@ int start_as_replica_server(char* main_host, int main_port)
 			printf("Me connecting to the new server...\"%s\"\n", params->next_host);
 			sleep(5);
 			params->sockfd = sockfd = connect_server(params->next_host, heart_beat_port);
-			pthread_cancel(update_replica_thread);
+			
 		}
 
-		free(params);
+		pthread_cancel(update_replica_thread);
 	}
 	
 	printf("becoming master...\n");
 	
 	// stop receiving replica files
-	pthread_cancel(receive_replica_files_thread);
+	pthread_cancel(replication_thread);
 	
 	// start dropbox server
 	pthread_t wait_for_dropbox_thread = start_all_main_services_starting_at_port(main_port);
 	
+	//TODO: let all files available to clients
 	//TODO: send all clients ip a message to connecto to me
 	
 	// block dropbox server execution
@@ -384,7 +392,7 @@ void* receive_replica_files(void* args)
 	while(1)
 	{
 		// receive file info
-		if (read_until_eos_buffered(sockfd, message_buffer) < 0)
+		if (read_until_eos(sockfd, message_buffer) < 0)
 		{
 			// error occured, finalize thread
 		}
@@ -393,6 +401,24 @@ void* receive_replica_files(void* args)
 			// receive file data
 		}	
 	}
+}
+
+int start_replica_transaction(char* command, char* username, char* filename, char* modtime, int filesize )
+{
+
+	return 1;
+}
+
+int replica_file_get_copy_buffer(char* buffer, int size)
+{
+
+	return 1;
+}
+
+int commit_replica_transaction(char* command)
+{
+
+	return 1;
 }
 
 void* time_server_client_process(void* sock_ptr)

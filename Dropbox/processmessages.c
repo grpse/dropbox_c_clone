@@ -19,6 +19,7 @@
 #include "client.h"
 
 #include "processmessages.h"
+#include "dropboxServer.h"
 
 // Toda a vez que users for utilizado dentro do processamento das requisições
 // do cliente, precisa mutex
@@ -284,11 +285,23 @@ void process_upload(char *message, struct client *cli, int sock)
   char filename[PATH_MAX];
   sprintf(filename, "%s%s", cli->path_user, fname);
 
-  if (read_and_save_to_file(sock, filename, fsize) < 0)
+  // TODO: Complete transaction
+  if (start_replica_transaction("replicate_file", cli->path_user, fname, mtime, fsize) < 0)
+  {
+    printf("Error on transaction. Rolling Back...\n");
+  }
+
+  if (read_and_save_to_file_and_callback(sock, filename, fsize, replica_file_get_copy_buffer) < 0)
   {
     package_response(-1, "Error saving file", buffer);
     write_str_to_socket(sock, buffer);
     return;
+  }
+
+  if (commit_replica_transaction("commit_replicate_file") < 0)
+  {
+    printf("Error on transaction. Rolling Back...\n");
+    // TODO: Inform user that the file is not success fully saved
   }
 
   // Ajusta a hora de modificação

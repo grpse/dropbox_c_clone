@@ -87,29 +87,34 @@ int read_and_save_to_file(int sock, char * filename, int fsize){
 		}
 		k += r;
 	}
+	close(f);
+	return 1;
+}
 
-	// int k = 0, r;
-	// char c;
-	// while(k < fsize){
-	// 	r = read(sock, &c, 1);
-	// 	if (r < 0)
-	// 		break;
-	//
-	// 	//printf("%c", c);
-	// 	r = write(f, &c, 1);
-	// 	if (r < 0){
-	// 		puts("Error writing file");
-	// 		close(f);
-	// 		return -1;
-	// 	}
-	// 	k += r;
-	// }
-	// int sended;
-	// if ((sended = sendfile(f, sock, NULL, fsize)) != fsize){
-	// 	printf("Received: %d\n", sended);
-	// 	close(f);
-	// 	return -1;
-	// }
+int read_and_save_to_file_and_callback(int sock, char * filename, int fsize, void (*on_each_read)(char* buffer, int size)){
+	int f = -1;
+	if ((f = creat(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0)
+		return -1;
+
+	char buffer_copy[1250];
+
+	int k=0, r;
+	while(k < fsize){
+		r = read(sock, buffer_copy, sizeof(buffer_copy));
+		if (on_each_read)
+			on_each_read(buffer_copy, r);
+		if (r < 0)
+			break;
+
+		//printf("%c", c);
+		r = write(f, buffer_copy, r);
+		if (r < 0){
+			puts("Error writing file");
+			close(f);
+			return -1;
+		}
+		k += r;
+	}
 	close(f);
 	return 1;
 }
