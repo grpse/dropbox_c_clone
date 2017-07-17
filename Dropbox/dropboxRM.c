@@ -30,8 +30,8 @@ int start_as_replica_server(char* main_host, int main_port)
 	receive_my_replica_order(sockfd, &my_order);
 	printf("My order on replicas list: %d\n", my_order);
 
-	struct ReplicasUpdateVerifyParams* params = (struct ReplicasUpdateVerifyParams*)calloc(1, sizeof(struct ReplicasUpdateVerifyParams));
-		
+	// struct ReplicasUpdateVerifyParams* params = (struct ReplicasUpdateVerifyParams*)calloc(1, sizeof(struct ReplicasUpdateVerifyParams));
+	struct ReplicasUpdateVerifyParams* params = TCALLOC(struct ReplicasUpdateVerifyParams, 1);	
 	params->main_host = main_host;
 	params->main_port = main_port;
 	params->sockfd = sockfd;

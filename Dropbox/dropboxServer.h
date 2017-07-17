@@ -22,12 +22,14 @@
 
 
 #define MAIN_PORT main_port
-#define TIME_PORT main_port + 1
-#define HEART_PORT main_port + 2
-#define REPLICATION_PORT main_port + 3
+#define TIME_PORT (main_port + 1)
+#define HEART_PORT (main_port + 2)
+#define REPLICATION_PORT (main_port + 3)
 
 void* client_intermediate_process(void* args);
 void* replicas_update_ips_list(void* args);
+void* replication_server(void* args);
+void* replica_manager_disconnection(int socket);
 
 int start_replica_transaction(char* command, char* username, char* filename, char* modtime, int filesize );
 int replica_file_get_copy_buffer(char* buffer, int size);

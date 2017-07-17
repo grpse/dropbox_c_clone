@@ -2,15 +2,17 @@
 #include "dropboxRM.h"
 
 pthread_mutex_t receive_ip_mutex;
+pthread_mutex_t replica_socket_mutex;
 
 #define MAX_REPLICA_SOCKETS 128
+#define MAX_REPLICA_IP_LIST 4096
 int replica_sockets[MAX_REPLICA_SOCKETS];
-int replica_sockets_index = 0;
+int replica_sockets_index;
 
-char replicas_ip_list[4096] = "";
-char clients_ip_list[4096] = "";
-int last_replica_order = 0;
-int main_port = 0;
+char replicas_ip_list[MAX_REPLICA_IP_LIST];
+char clients_ip_list[MAX_REPLICA_IP_LIST];
+int last_replica_order;
+int main_port;
 
 int main(int argc, char *argv[])
 {
@@ -21,6 +23,13 @@ int main(int argc, char *argv[])
 		printf("usage: %s [main|replica <main host>] <port>\n", argv[0]);
 		return 1;
 	}
+
+	// init global variables
+	bzero(replicas_ip_list, MAX_REPLICA_IP_LIST);
+	bzero(clients_ip_list, MAX_REPLICA_IP_LIST);
+	last_replica_order = 0;
+	main_port = 0;
+	replica_sockets_index = 0;
 	
 	init_users();
 	
@@ -63,7 +72,7 @@ pthread_t start_all_main_services_starting_at_port(int main_port)
 	// create update replicas port
 	execute_tcp_server_listener_nonblock(port_update_replicas, replicas_update_ips_list);
 	// Create a replication server to replicas connect to receive files
-	execute_tcp_server_listener_nonblock(port_replication, )
+	execute_tcp_server_listener_callback_nonblock(port_replication, replication_server, replica_manager_disconnection);
 	// start dropbox wait service
 	return execute_tcp_server_listener_nonblock(port, client_intermediate_process);
 }
@@ -157,11 +166,29 @@ void* replication_server(void* args)
 {
 	// declare variables
 	int sockfd = *(int*)sock_ptr;
-	
-	replica_sockets_index = ++replica_sockets_index % MAX_REPLICA_SOCKETS;
-	replica_sockets[replica_sockets_index] = sockfd;
-	
-	
+
+	// push replica socket to replicas sockets array
+	SCOPELOCK(replica_socket_mutex, {
+		replica_sockets[replica_sockets_index++] = sockfd;
+	});
+}
+
+void* replica_manager_disconnection(int socket)
+{
+	// Remove replica connection socket from replicas socket array
+	SCOPELOCK(replica_socket_mutex, {
+		int socket_index = -1;
+		for (int i = 0; i < replica_sockets_index; i++)
+		{
+			if (replica_sockets[i] == socket)
+			{
+				for (int j = i; j < replica_sockets_index - 1; j++)
+					replica_sockets[j] = replica_sockets[j + 1];
+				replica_sockets_index--;
+				break;
+			}
+		}
+	});
 }
 
 int start_replica_transaction(char* command, char* username, char* filename, char* modtime, int filesize )

@@ -48,6 +48,9 @@
         } else { {elseScope;}; }                          \
     }
 
+#define MALLOC1(type) TCALLOC(type, 1)
+#define TCALLOC(type, count) (type*)calloc((count), sizeof(type))
+
 
 typedef int bool;
 
@@ -99,11 +102,19 @@ int read_int_from_socket(int sock, int* number);
 struct PortAndFunc {
   int port;
   void* (*execute_client)(void* args);
+  void* (*client_disconnect_callback)(int client_socket);
+  pthread_t client_thread;
+  int client_socket;
 };
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão, mas bloqueia essa função.
 int execute_tcp_server_listener_block(int port, void* (*execute_client)(void* args));
+
+// cria um tcp server e executa threads com uma função para tratar novas conexões
+// executa uma thread para cada nova conexão e não bloqueia a execução.
+// Recebe uma função de callback para tratar a desconexão de um cliente.
+pthread_t execute_tcp_server_listener_callback_nonblock(int port, void* (*execute_client)(void* args), void* (*client_disconnect_callback)(int client_socket))
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão e não bloqueia a execução.

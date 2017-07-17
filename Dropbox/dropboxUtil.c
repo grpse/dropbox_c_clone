@@ -178,12 +178,28 @@ int execute_tcp_server_listener_block(int port, void* (*execute_client)(void* ar
 
 // cria um tcp server e executa threads com uma função para tratar novas conexões
 // executa uma thread para cada nova conexão e não bloqueia a execução.
+// Recebe uma função de callback para tratar a desconexão de um cliente.
+pthread_t execute_tcp_server_listener_callback_nonblock(int port, void* (*execute_client)(void* args), void* (*client_disconnect_callback)(int client_socket))
+{
+  // inicia a estrutura para passar como parâmetro
+  struct PortAndFunc* portAndFuncArgs = MALLOC1(struct PortAndFunc);
+  portAndFuncArgs->port = port;
+  portAndFuncArgs->execute_client = execute_client;
+  portAndFuncArgs->client_disconnect_callback = client_disconnect_callback;
+  
+  // executa uma thread para tratar o executor de escuta do servidor TCP
+  return async_executor(portAndFuncArgs, __execute_tcp_server_listener_nonblock);
+}
+
+// cria um tcp server e executa threads com uma função para tratar novas conexões
+// executa uma thread para cada nova conexão e não bloqueia a execução.
 pthread_t execute_tcp_server_listener_nonblock(int port, void* (*execute_client)(void* args))
 {
   // inicia a estrutura para passar como parâmetro
-  struct PortAndFunc* portAndFuncArgs = (struct PortAndFunc*)malloc(sizeof(struct PortAndFunc));
+  struct PortAndFunc* portAndFuncArgs = MALLOC1(struct PortAndFunc);
   portAndFuncArgs->port = port;
   portAndFuncArgs->execute_client = execute_client;
+  portAndFuncArgs->client_disconnect_callback = NULL;
   
   // executa uma thread para tratar o executor de escuta do servidor TCP
   return async_executor(portAndFuncArgs, __execute_tcp_server_listener_nonblock);
@@ -208,9 +224,9 @@ void* __execute_tcp_server_listener_nonblock(void* args) {
 	struct sockaddr_in cli_addr;
 	socklen_t clilen = sizeof(struct sockaddr_in);
 	
-	while (1)
+	while (true)
 	{
-		int *newsockfd = (int *)malloc(sizeof(int));
+		int *newsockfd = MALLOC1(int);
 		*newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
 		if (*newsockfd < 0)
 		{
@@ -219,13 +235,47 @@ void* __execute_tcp_server_listener_nonblock(void* args) {
 			pthread_exit(&returnStatus);
 		}
 
-		async_executor(newsockfd, portAndFuncArgs.execute_client);
+		// Get client thread to make external cancelation
+		pthread_t client_thread = async_executor(newsockfd, portAndFuncArgs.execute_client);
+
+		// If there is a function to be called back on disconnection, start verifying
+		// connection status to call it on the end of an connection
+		if (portAndFuncArgs.client_disconnect_callback != NULL)
+		{
+			struct PortAndFunc* params = MALLOC1(struct PortAndFunc);
+			params->client_socket = *newsockfd;
+			params->client_thread = client_thread;
+			async_executor(params, stay_verifying_socket_disconnection);
+		}
 	}
 
 	close(sockfd);
 	returnStatus = 0;
 	pthread_exit(&returnStatus);
 }
+
+// Stays verifying if connected socket is still alive
+// and call a callback function when disconnect
+void* stay_verifying_socket_disconnection(void* args)
+{
+	// make arguments copy
+	struct PortAndFunc params;
+	memcpy(&params, args, sizeof(struct PortAndFunc));
+	free(args);
+
+	// watch for socket disconnection
+	while (true)
+		if (is_socket_disconnected(params->client_socket))
+			break;
+
+	// when disconnected, call the callback function with
+	// client socket to handle it clearly
+	if (params->client_disconnect_callback != NULL)
+		params->client_disconnect_callback(params->client_socket);
+
+	// cancel client thread
+	pthread_cancel(params->client_thread);
+} 
 
 /*
 Conecta cliente ao servidor.
