@@ -32,7 +32,8 @@ void* replication_server(void* args);
 void* replica_manager_disconnection(int socket);
 
 int start_replica_transaction(char* command, char* username, char* filename, char* modtime, int filesize );
-int replica_file_get_copy_buffer(char* buffer, int size);
+bool send_file_to_replicas(char *filename, int filesize);
+bool replica_delete_file(char *filename);
 int commit_replica_transaction(char* command);
 
 void* time_server_client_process(void* sock_ptr);

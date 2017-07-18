@@ -68,6 +68,8 @@ void *file_sync_monitor(void *);
 void get_sync_dir_local_path(char *out_user_path);
 void *auto_sync_files(void *);
 
+void* receive_connection_of_replica_to_reconnect(void* args);
+
 // Faz uma requisição de hora ao time server na porta + 1
 time_t get_time_server();
 

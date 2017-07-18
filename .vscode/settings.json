@@ -6,6 +6,13 @@
         "client.h": "c",
         "string.h": "c",
         "string2.h": "c",
-        "pthread.h": "c"
+        "pthread.h": "c",
+        "c++config.h": "c",
+        "dropboxrm.h": "c",
+        "getopt.h": "c",
+        "utime.h": "c",
+        "time.h": "c",
+        "inotify.h": "c",
+        "stdio2.h": "c"
     }
 }

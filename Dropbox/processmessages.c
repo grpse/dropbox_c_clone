@@ -24,6 +24,8 @@
 // Toda a vez que users for utilizado dentro do processamento das requisições
 // do cliente, precisa mutex
 pthread_mutex_t users_mutex;
+pthread_mutex_t transaction_mutex;
+
 //struct userlst_t users;
 char dir_base[PATH_MAX];
 
@@ -258,7 +260,7 @@ void process_upload(char *message, struct client *cli, int sock)
   // Retira informação da mensagem
 
   // Por enquanto, só aceita a mensagem e espera pelo arquivo
-  char buffer[512];
+  char buffer[PATH_MAX];
   package_response(1, "Ready to receive.", buffer);
   write_str_to_socket(sock, buffer);
 
@@ -285,24 +287,48 @@ void process_upload(char *message, struct client *cli, int sock)
   char filename[PATH_MAX];
   sprintf(filename, "%s%s", cli->path_user, fname);
 
-  // TODO: Complete transaction
-  if (start_replica_transaction("replicate_file", cli->path_user, fname, mtime, fsize) < 0)
-  {
-    printf("Error on transaction. Rolling Back...\n");
-  }
+  bool error_on_reading_file = false;
+  // Complete transaction
+  SCOPELOCK(transaction_mutex, {
+    if (start_replica_transaction(REPLICATE_FILE, cli->userid, fname, mtime, fsize) < 0)
+    {
+      printf("Error on transaction. Rolling Back...\n");
+    }
 
-  if (read_and_save_to_file_and_callback(sock, filename, fsize, replica_file_get_copy_buffer) < 0)
-  {
-    package_response(-1, "Error saving file", buffer);
-    write_str_to_socket(sock, buffer);
+    
+    if (read_and_save_to_file(sock, filename, fsize) < 0)
+    {
+      package_response(-1, "Error saving file", buffer);
+      write_str_to_socket(sock, buffer);
+      error_on_reading_file = true;
+    }
+
+    if (error_on_reading_file)
+    {
+      // send a rollback to everybody
+      if (commit_replica_transaction(ROLLBACK) < 0)
+      {
+
+      }
+    }
+    else
+    {
+      if (!send_file_to_replicas(filename, fsize))
+      {
+        // handle error
+      }
+
+      if (commit_replica_transaction(COMMIT_REPLICATE_FILE) < 0)
+      {
+        printf("Error on transaction. Rolling Back...\n");
+        // TODO: Inform user that the file is not success fully saved
+      }
+    }
+
+  });
+
+  if (error_on_reading_file)
     return;
-  }
-
-  if (commit_replica_transaction("commit_replicate_file") < 0)
-  {
-    printf("Error on transaction. Rolling Back...\n");
-    // TODO: Inform user that the file is not success fully saved
-  }
 
   // Ajusta a hora de modificação
   struct utimbuf ntime;
@@ -372,12 +398,51 @@ void process_delete(char *message, struct client *cli, int sock)
     {
       char filename[PATH_MAX];
       sprintf(filename, "%s%s", cli->path_user, init_filename);
-      if (remove(filename) < 0)
-      {
-        package_response(-1, "Error removing", send_buf);
-        write_str_to_socket(sock, send_buf);
+
+      bool error_on_removing = false;
+      // Complete transaction
+      SCOPELOCK(transaction_mutex, {
+        if (start_replica_transaction(DELETE_FILE, cli->userid, cli->files[i].name, cli->files[i].last_modified, cli->files[i].size) < 0)
+        {
+          printf("Error on transaction. Rolling Back...\n");
+        }
+
+        if (remove(filename) < 0)
+        {
+          package_response(-1, "Error removing", send_buf);
+          write_str_to_socket(sock, send_buf);
+          error_on_removing = true;
+        }
+
+        if (error_on_removing)
+        {
+          if (commit_replica_transaction(ROLLBACK) < 0)
+          {
+
+          }
+        }
+        else
+        {
+          if (!replica_delete_file(cli->files[i].name))
+          {
+            //handle error
+            if (commit_replica_transaction(ROLLBACK) < 0)
+            {
+
+            }
+          }
+
+          if (commit_replica_transaction(COMMIT_DELETE_FILE) < 0)
+          {
+            //handle error
+          }
+        }
+
+      });
+
+      if (error_on_removing)
         return;
-      }
+
       // file_init_write(&cli->files[i]);
       bzero(cli->files[i].name, sizeof(cli->files[i].name));
       bzero(cli->files[i].extension, sizeof(cli->files[i].extension));

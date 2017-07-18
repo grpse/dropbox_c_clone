@@ -4,7 +4,7 @@
 int sock_g;
 int port_g;
 char *username_g;
-char *hostname_g;
+char hostname_g[64];
 char buffer_read[(MAX_USERID * 3 + 20) * MAXFILES + 5];
 char buffer_write[2048];
 
@@ -21,7 +21,7 @@ int main(int argc, char *argv[])
 
   char command_buffer[2048] = "";
   username_g = argv[1];
-  hostname_g = argv[2];
+  strcpy(hostname_g, argv[2]);
   port_g = atoi(argv[3]);
 
   if (argc < 4)
@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
-  // se já existe o sync_dir_<username>, inicia a sincronização
+   // se já existe o sync_dir_<username>, inicia a sincronização
   if (exist_local_sync_dir())
   {
     start_sync_monitor();
@@ -58,6 +58,9 @@ int main(int argc, char *argv[])
 
   char *ptr;
   char *f_esp;
+
+  // start server to listen to replica replace
+  execute_tcp_server_listener_nonblock(CLIENT_RECONNECT_PORT, receive_connection_of_replica_to_reconnect);
 
   while (1)
   {
@@ -816,6 +819,35 @@ void *auto_sync_files(void *args)
       });
     });
   }
+}
+
+void* receive_connection_of_replica_to_reconnect(void* args)
+{
+  int sockfd = *(int*)args;
+
+  SCOPELOCK(file_sync_mutex, {
+    if (read_until_eos(sockfd, hostname_g) < 0)
+    {
+      printf("ERROR RECEIVING NEW IP ADDRESS\n");
+      exit(1);
+    }
+    printf("new ip to connect: '%s'\n", hostname_g);
+    sock_g = connect_server(hostname_g, port_g);
+
+    if (sock_g < 0)
+    {
+      printf("ERROR ON RECONNECTING\n");
+      exit(1);
+    }
+
+    if (login(username_g))
+    {
+      printf("ERROR ON LOGGIN\n");
+      exit(1);
+    }
+
+    printf("Reconnecting to \"%s\"\n\r", hostname_g);
+  });
 }
 
 time_t get_time_server()
